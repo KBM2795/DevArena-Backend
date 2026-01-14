@@ -11,21 +11,21 @@ import (
 	"time"
 
 	"github.com/KBM2795/DevArena-Backend/internal/config"
-	"github.com/KBM2795/DevArena-Backend/internal/database"
+	"github.com/KBM2795/DevArena-Backend/internal/db"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
 	router     *gin.Engine
-	db         *database.Database
-	config     config.Server
+	db         *db.Database
+	config     *config.Config
 	httpServer *http.Server
 }
 
-func NewServer(cfg config.Server, db *database.Database, env string) *Server {
+func NewServer(cfg *config.Config, db *db.Database) *Server {
 	// Set Gin mode based on environment
-	if env != "Dev" {
+	if cfg.Env != "Dev" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -60,22 +60,8 @@ func NewServer(cfg config.Server, db *database.Database, env string) *Server {
 	return server
 }
 
-func (s *Server) RegisterRoutes() {
-	s.router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "Welcome to DevArena Backend",
-		})
-	})
-
-	s.router.GET("/health", s.HealthHandler)
-}
-
-func (s *Server) HealthHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, s.db.Health())
-}
-
 func (s *Server) Run() error {
-	addr := fmt.Sprintf(":%s", s.config.Port)
+	addr := fmt.Sprintf(":%s", s.config.Server.Port)
 
 	s.httpServer = &http.Server{
 		Addr:    addr,

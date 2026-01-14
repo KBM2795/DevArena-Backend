@@ -10,6 +10,7 @@ type Config struct {
 	Env      string   `mapstructure:"env"`
 	Server   Server   `mapstructure:"server"`
 	Database Database `mapstructure:"database"`
+	Clerk    Clerk    `mapstructure:"clerk"`
 }
 
 type Server struct {
@@ -23,6 +24,11 @@ type Database struct {
 	Password string `mapstructure:"password"`
 	DBName   string `mapstructure:"dbname"`
 	SSLMode  string `mapstructure:"sslmode"`
+}
+
+type Clerk struct {
+	PEMPublicKey      string   `mapstructure:"pem_public_key"`
+	AuthorizedParties []string `mapstructure:"authorized_parties"`
 }
 
 func LoadConfig() (*Config, error) {
