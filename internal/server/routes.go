@@ -6,6 +6,7 @@ import (
 
 	"github.com/KBM2795/DevArena-Backend/internal/auth/middleware"
 	"github.com/KBM2795/DevArena-Backend/internal/handlers"
+	"github.com/KBM2795/DevArena-Backend/internal/webhooks"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,6 +14,9 @@ import (
 func (s *Server) RegisterRoutes() {
 	// Health check - outside of API versioning
 	s.router.GET("/health", handlers.HealthHandler)
+
+	// Webhook routes (no auth, but signature verified)
+	s.registerWebhookRoutes()
 
 	// API v1 routes
 	v1 := s.router.Group("/api/v1")
@@ -26,6 +30,14 @@ func (s *Server) RegisterRoutes() {
 		protected.Use(jwtMiddleware.Authenticate())
 		s.registerProtectedRoutes(protected)
 	}
+}
+
+// registerWebhookRoutes registers webhook endpoints
+func (s *Server) registerWebhookRoutes() {
+	webhookHandler := webhooks.NewClerkWebhookHandler(s.db, s.config.Clerk.WebhookSigningSecret)
+
+	// Clerk webhooks - POST /api/webhooks
+	s.router.POST("/api/webhooks", webhookHandler.HandleWebhook)
 }
 
 // registerPublicRoutes registers routes that don't require authentication

@@ -27,8 +27,9 @@ type Database struct {
 }
 
 type Clerk struct {
-	PEMPublicKey      string   `mapstructure:"pem_public_key"`
-	AuthorizedParties []string `mapstructure:"authorized_parties"`
+	PEMPublicKey         string   `mapstructure:"pem_public_key"`
+	AuthorizedParties    []string `mapstructure:"authorized_parties"`
+	WebhookSigningSecret string   `mapstructure:"webhook_signing_secret"`
 }
 
 func LoadConfig() (*Config, error) {
