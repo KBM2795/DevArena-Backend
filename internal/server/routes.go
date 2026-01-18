@@ -50,23 +50,13 @@ func (s *Server) registerPublicRoutes(rg *gin.RouterGroup) {
 		})
 	})
 
-	// Auth routes
-	// auth := rg.Group("/auth")
-	// {
-	// 	auth.POST("/register", s.handleRegister)
-	// 	auth.POST("/login", s.handleLogin)
-	// }
-
-	// Challenge routes (public read)
-	// challenges := rg.Group("/challenges")
-	// {
-	// 	challenges.GET("/", s.handleGetChallenges)
-	// 	challenges.GET("/:id", s.handleGetChallenge)
-	// }
 }
 
 // registerProtectedRoutes registers routes that require authentication
 func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
+	// Create handlers with database dependency
+	h := handlers.NewHandlers(s.db)
+
 	rg.GET("/protected", func(c *gin.Context) {
 		userID, exists := middleware.GetUserID(c)
 		fmt.Printf("Protected Route: Key exists: %v, UserID: %s\n", exists, userID)
@@ -77,17 +67,8 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 			"user_id": userID,
 		})
 	})
-	// User routes
-	// users := rg.Group("/users")
-	// {
-	// 	users.GET("/me", s.handleGetCurrentUser)
-	// 	users.PUT("/me", s.handleUpdateCurrentUser)
-	// }
 
-	// // Challenge submission routes
-	// submissions := rg.Group("/submissions")
-	// {
-	// 	submissions.POST("/", s.handleCreateSubmission)
-	// 	submissions.GET("/", s.handleGetMySubmissions)
-	// }
+	// Onboarding routes
+	rg.POST("/onboarding", h.OnboardingHandler)
+	
 }

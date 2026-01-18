@@ -193,18 +193,32 @@ func (h *ClerkWebhookHandler) handleUserCreated(c *gin.Context, data json.RawMes
 		displayName = primaryEmail
 	}
 
-	// Get username
-	username := ""
-	if userData.Username != nil {
-		username = *userData.Username
+	// Get username - use pointer to handle NULL properly
+	var username *string
+	if userData.Username != nil && *userData.Username != "" {
+		username = userData.Username
 	}
 
-	// Insert user into database
+	// Get github username as pointer (NULL if empty)
+	var githubUsernamePtr *string
+	if githubUsername != "" {
+		githubUsernamePtr = &githubUsername
+	}
+
+	// Insert user into database (or update if created just-in-time during onboarding)
+	// Use NULLIF to convert empty strings to NULL for UNIQUE constraint compatibility
 	userID := uuid.New().String()
 	query := `
 		INSERT INTO users (id, clerk_user_id, email, username, display_name, avatar_url, github_username, github_connected, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-		ON CONFLICT (clerk_user_id) DO NOTHING
+		ON CONFLICT (clerk_user_id) DO UPDATE SET
+			email = EXCLUDED.email,
+			username = COALESCE(NULLIF(EXCLUDED.username, ''), users.username),
+			display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), users.display_name),
+			avatar_url = COALESCE(NULLIF(EXCLUDED.avatar_url, ''), users.avatar_url),
+			github_username = COALESCE(NULLIF(EXCLUDED.github_username, ''), users.github_username),
+			github_connected = EXCLUDED.github_connected,
+			updated_at = NOW()
 	`
 
 	_, err := h.db.Pool.Exec(context.Background(), query,
@@ -214,17 +228,17 @@ func (h *ClerkWebhookHandler) handleUserCreated(c *gin.Context, data json.RawMes
 		username,
 		displayName,
 		userData.ImageURL,
-		githubUsername,
+		githubUsernamePtr,
 		githubUsername != "",
 	)
 
 	if err != nil {
-		log.Printf("Error inserting user: %v", err)
+		log.Printf("Error inserting/updating user: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		return
 	}
 
-	log.Printf("Created user: clerk_id=%s, email=%s", userData.ID, primaryEmail)
+	log.Printf("Created/updated user: clerk_id=%s, email=%s", userData.ID, primaryEmail)
 	c.JSON(http.StatusOK, gin.H{"message": "User created successfully"})
 }
 
@@ -258,20 +272,26 @@ func (h *ClerkWebhookHandler) handleUserUpdated(c *gin.Context, data json.RawMes
 	// Build display name
 	displayName := strings.TrimSpace(fmt.Sprintf("%s %s", userData.FirstName, userData.LastName))
 
-	// Get username
-	username := ""
-	if userData.Username != nil {
-		username = *userData.Username
+	// Get username - use pointer to handle NULL properly
+	var username *string
+	if userData.Username != nil && *userData.Username != "" {
+		username = userData.Username
 	}
 
-	// Update user in database
+	// Get github username as pointer (NULL if empty)
+	var githubUsernamePtr *string
+	if githubUsername != "" {
+		githubUsernamePtr = &githubUsername
+	}
+
+	// Update user in database - use NULLIF to avoid empty string unique constraint issues
 	query := `
 		UPDATE users 
 		SET email = $2, 
-			username = $3, 
-			display_name = $4, 
-			avatar_url = $5, 
-			github_username = $6, 
+			username = COALESCE(NULLIF($3, ''), username), 
+			display_name = COALESCE(NULLIF($4, ''), display_name), 
+			avatar_url = COALESCE(NULLIF($5, ''), avatar_url), 
+			github_username = COALESCE(NULLIF($6, ''), github_username), 
 			github_connected = $7,
 			updated_at = NOW()
 		WHERE clerk_user_id = $1
@@ -283,7 +303,7 @@ func (h *ClerkWebhookHandler) handleUserUpdated(c *gin.Context, data json.RawMes
 		username,
 		displayName,
 		userData.ImageURL,
-		githubUsername,
+		githubUsernamePtr,
 		githubUsername != "",
 	)
 

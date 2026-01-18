@@ -3,58 +3,51 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/KBM2795/DevArena-Backend/internal/auth/middleware"
+	"github.com/KBM2795/DevArena-Backend/internal/db"
 	"github.com/gin-gonic/gin"
 )
+
+// Handlers holds dependencies for HTTP handlers
+type Handlers struct {
+	DB *db.Database
+}
+
+// NewHandlers creates a new Handlers instance
+func NewHandlers(database *db.Database) *Handlers {
+	return &Handlers{DB: database}
+}
 
 // HealthHandler checks database connection health
 func HealthHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Server is running"})
 }
 
-// handleGetCurrentUser returns the current user's profile
-// func (s *Server) handleGetCurrentUser(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusOK, gin.H{"message": "Get current user"})
-// }
+// OnboardingHandler handles onboarding data
+func (h *Handlers) OnboardingHandler(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 
-// handleUpdateCurrentUser updates the current user's profile
-// func (s *Server) handleUpdateCurrentUser(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusOK, gin.H{"message": "Update current user"})
-// }
+	var onboardingData struct {
+		Experience   string   `json:"experience"`
+		Paths        []string `json:"paths"`
+		Technologies []string `json:"technologies"`
+	}
 
-// handleRegister handles user registration
-// func (s *Server) handleRegister(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusCreated, gin.H{"message": "User registered"})
-// }
 
-// handleLogin handles user login
-// func (s *Server) handleLogin(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusOK, gin.H{"message": "User logged in"})
-// }
+	if err := c.ShouldBindJSON(&onboardingData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
 
-// handleGetChallenges returns a list of challenges
-// func (s *Server) handleGetChallenges(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusOK, gin.H{"challenges": []string{}})
-// }
+	// Save onboarding data to database
+	if err := h.DB.SaveOnboardingData(userID, onboardingData); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save onboarding data"})
+		return
+	}
 
-// handleGetChallenge returns a single challenge by ID
-// func (s *Server) handleGetChallenge(c *gin.Context) {
-// 	id := c.Param("id")
-// 	c.JSON(http.StatusOK, gin.H{"challenge_id": id})
-// }
-
-// handleCreateSubmission creates a new challenge submission
-// func (s *Server) handleCreateSubmission(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusCreated, gin.H{"message": "Submission created"})
-// }
-
-// handleGetMySubmissions returns the current user's submissions
-// func (s *Server) handleGetMySubmissions(c *gin.Context) {
-// 	// TODO: Implement
-// 	c.JSON(http.StatusOK, gin.H{"submissions": []string{}})
-// }
+	c.JSON(http.StatusOK, gin.H{"message": "Onboarding data saved successfully"})
+}
