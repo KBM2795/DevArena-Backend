@@ -42,6 +42,8 @@ func (s *Server) registerWebhookRoutes() {
 
 // registerPublicRoutes registers routes that don't require authentication
 func (s *Server) registerPublicRoutes(rg *gin.RouterGroup) {
+	// Create handlers with database dependency
+	h := handlers.NewHandlers(s.db)
 
 	rg.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -50,6 +52,15 @@ func (s *Server) registerPublicRoutes(rg *gin.RouterGroup) {
 		})
 	})
 
+	// Challenge routes (public - no auth required)
+	rg.GET("/challenges", h.GetChallengesHandler)
+	rg.GET("/challenges/:id", h.GetChallengeByIDHandler)
+
+	// Tags route (for filter dropdowns)
+	rg.GET("/tags", h.GetTagsHandler)
+
+	// Leaderboard route (public)
+	rg.GET("/leaderboard", h.LeaderboardHandler)
 }
 
 // registerProtectedRoutes registers routes that require authentication
@@ -70,5 +81,21 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 
 	// Onboarding routes
 	rg.POST("/onboarding", h.OnboardingHandler)
-	
+
+	// Profile routes
+	rg.GET("/profile", h.ProfileHandler)
+
+	// Starter pack route (user-specific challenges)
+	rg.GET("/me/starter-pack", h.GetStarterPackHandler)
+
+	// Activity route for contribution graph
+	rg.GET("/me/activity", h.ActivityHandler)
+
+	// Stats routes
+	rg.GET("/me/stats", h.StatsHandler)
+	rg.GET("/me/submissions", h.RecentSubmissionsHandler)
+	rg.GET("/me/tech-focus", h.TechFocusHandler)
+
+	// Review route (user's review for a challenge)
+	rg.GET("/me/reviews/:challengeId", h.ReviewHandler)
 }

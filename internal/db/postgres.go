@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/KBM2795/DevArena-Backend/internal/config"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Database struct {
 	Pool *pgxpool.Pool
 }
-
 
 func Connect(cfg config.Database) (*Database, error) {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
@@ -29,6 +29,10 @@ func Connect(cfg config.Database) (*Database, error) {
 	poolConfig.MinConns = 2
 	poolConfig.MaxConnLifetime = time.Hour
 	poolConfig.MaxConnIdleTime = 30 * time.Minute
+
+	// Disable prepared statement cache to avoid "prepared statement already exists" errors
+	// with connection poolers like PgBouncer or Supabase
+	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
