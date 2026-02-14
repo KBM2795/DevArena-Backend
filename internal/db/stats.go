@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -18,15 +19,15 @@ type UserStats struct {
 
 // RecentSubmission represents a submission with challenge info
 type RecentSubmission struct {
-	ID          string   `json:"id"`
-	ChallengeID string   `json:"challenge_id"`
-	Title       string   `json:"title"`
-	Difficulty  string   `json:"difficulty"`
-	Score       int      `json:"score"`
-	MaxScore    int      `json:"max_score"`
-	Status      string   `json:"status"`
-	TechStack   []string `json:"tech_stack"`
-	SubmittedAt string   `json:"submitted_at"`
+	ID               string   `json:"id"`
+	ChallengeID      string   `json:"challenge_id"`
+	Title            string   `json:"title"`
+	Difficulty       string   `json:"difficulty"`
+	FinalScore       int      `json:"final_score"`
+	MaxScore         int      `json:"max_score"`
+	EvaluationStatus string   `json:"evaluation_status"`
+	TechStack        []string `json:"tech_stack"`
+	SubmittedAt      string   `json:"submitted_at"`
 }
 
 // GetUserStats returns comprehensive stats for a user
@@ -58,13 +59,15 @@ func (db *Database) GetUserStats(clerkUserID string) (*UserStats, error) {
 		SELECT COUNT(*) FROM submissions WHERE user_id = $1
 	`, internalUserID).Scan(&stats.TotalSubmissions)
 
-	// Calculate acceptance rate (reviewed submissions with score > 70%)
+	// Calculate acceptance rate (completed submissions with score >= 70%)
 	var reviewed, passed int
 	db.Pool.QueryRow(ctx, `
 		SELECT 
-			COUNT(*) FILTER (WHERE status = 'reviewed'),
-			COUNT(*) FILTER (WHERE status = 'reviewed' AND score >= 70)
-		FROM submissions WHERE user_id = $1
+			COUNT(*) FILTER (WHERE s.evaluation_status = 'completed'),
+			COUNT(*) FILTER (WHERE s.evaluation_status = 'completed' AND COALESCE(sc.final_score, 0) >= 70)
+		FROM submissions s
+		LEFT JOIN submission_scores sc ON s.id = sc.submission_id
+		WHERE s.user_id = $1
 	`, internalUserID).Scan(&reviewed, &passed)
 
 	if reviewed > 0 {
@@ -95,13 +98,14 @@ func (db *Database) GetRecentSubmissions(clerkUserID string, limit int) ([]Recen
 			s.challenge_id,
 			c.title,
 			c.difficulty,
-			s.score,
+			COALESCE(sc.final_score, 0),
 			c.max_score,
-			s.status,
+			s.evaluation_status,
 			c.tech_stack,
 			TO_CHAR(s.created_at, 'YYYY-MM-DD') as submitted_at
 		FROM submissions s
 		JOIN challenges c ON s.challenge_id = c.id
+		LEFT JOIN submission_scores sc ON s.id = sc.submission_id
 		WHERE s.user_id = $1
 		ORDER BY s.created_at DESC
 		LIMIT $2
@@ -116,18 +120,25 @@ func (db *Database) GetRecentSubmissions(clerkUserID string, limit int) ([]Recen
 	var submissions []RecentSubmission
 	for rows.Next() {
 		var sub RecentSubmission
+		var techStackJSON []byte
 		if err := rows.Scan(
 			&sub.ID,
 			&sub.ChallengeID,
 			&sub.Title,
 			&sub.Difficulty,
-			&sub.Score,
+			&sub.FinalScore,
 			&sub.MaxScore,
-			&sub.Status,
-			&sub.TechStack,
+			&sub.EvaluationStatus,
+			&techStackJSON,
 			&sub.SubmittedAt,
 		); err != nil {
 			return nil, err
+		}
+		if len(techStackJSON) > 0 {
+			json.Unmarshal(techStackJSON, &sub.TechStack)
+		}
+		if sub.TechStack == nil {
+			sub.TechStack = []string{}
 		}
 		submissions = append(submissions, sub)
 	}
@@ -165,7 +176,7 @@ func (db *Database) GetUserTechFocus(clerkUserID string) ([]TechFocus, error) {
 			SELECT DISTINCT s.challenge_id, jsonb_array_elements_text(c.tech_stack::jsonb) as tech
 			FROM submissions s
 			JOIN challenges c ON s.challenge_id = c.id
-			WHERE s.user_id = $1 AND s.status = 'reviewed'
+			WHERE s.user_id = $1 AND s.evaluation_status = 'completed'
 		) sub
 		GROUP BY tech
 		ORDER BY count DESC

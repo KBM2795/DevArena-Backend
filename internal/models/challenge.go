@@ -15,6 +15,14 @@ const (
 	DifficultyHard   Difficulty = "Hard"
 )
 
+// Rubric defines the scoring weights for a challenge
+type Rubric struct {
+	Functionality int `json:"functionality"`
+	CodeQuality   int `json:"code_quality"`
+	Constraints   int `json:"constraints"`
+	Architecture  int `json:"architecture"`
+}
+
 // ChallengeType represents the type of challenge
 type ChallengeType string
 
@@ -27,27 +35,30 @@ const (
 
 // Challenge represents a DevArena coding challenge
 type Challenge struct {
-	ID              string        `json:"id" gorm:"primaryKey;type:varchar(255)"`
-	Title           string        `json:"title" gorm:"type:varchar(255);not null"`
-	Description     string        `json:"description" gorm:"type:text;not null"`
-	Difficulty      Difficulty    `json:"difficulty" gorm:"type:varchar(20);not null"`
-	Type            ChallengeType `json:"type" gorm:"type:varchar(50);default:project"`
-	MaxScore        int           `json:"max_score" gorm:"not null;default:100"`
-	RepoTemplateURL string        `json:"repo_template_url" gorm:"type:text"` // Starter template repo
-	Requirements    Requirements  `json:"requirements" gorm:"type:jsonb"`     // Review criteria
-	TechStack       TechStack     `json:"tech_stack" gorm:"type:jsonb"`       // Expected technologies
-	EstimatedHours  int           `json:"estimated_hours" gorm:"default:4"`   // Estimated completion time
-	IsPublished     bool          `json:"is_published" gorm:"default:false"`
-	CreatedAt       time.Time     `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt       time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
+	ID              string          `json:"id" gorm:"primaryKey;type:varchar(255)"`
+	Title           string          `json:"title" gorm:"type:varchar(255);not null"`
+	Description     string          `json:"description" gorm:"type:text;not null"`
+	DescriptionMD   string          `json:"description_md" gorm:"type:text"`
+	Difficulty      Difficulty      `json:"difficulty" gorm:"type:varchar(20);not null"`
+	Type            ChallengeType   `json:"type" gorm:"type:varchar(50);default:project"`
+	MaxScore        int             `json:"max_score" gorm:"not null;default:100"`
+	RepoTemplateURL string          `json:"repo_template_url" gorm:"type:text"`    // Starter template repo
+	Requirements    Requirements    `json:"requirements" gorm:"type:jsonb"`        // Review criteria
+	TechStack       TechStack       `json:"tech_stack" gorm:"type:jsonb"`          // Expected technologies
+	EstimatedHours  int             `json:"estimated_hours" gorm:"default:4"`      // Estimated completion time
+	Rubric          json.RawMessage `json:"rubric" gorm:"type:jsonb;default:'{}'"` // Scoring breakdown per challenge
+	IsPublished     bool            `json:"is_published" gorm:"default:false"`
+	CreatedAt       time.Time       `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt       time.Time       `json:"updated_at" gorm:"autoUpdateTime"`
 
 	// Computed fields (not stored, calculated at query time)
 	SuccessRate     float64 `json:"success_rate" gorm:"-"`
 	SubmissionCount int     `json:"submission_count" gorm:"-"`
 
 	// Relationships
-	Tags        []Tag        `json:"tags" gorm:"many2many:challenge_tags"`
-	Submissions []Submission `json:"submissions,omitempty" gorm:"foreignKey:ChallengeID"`
+	Tags        []Tag              `json:"tags" gorm:"many2many:challenge_tags"`
+	Submissions []Submission       `json:"submissions,omitempty" gorm:"foreignKey:ChallengeID"`
+	Template    *ChallengeTemplate `json:"template,omitempty" gorm:"foreignKey:ChallengeID;references:ID"`
 }
 
 // Requirements represents the review criteria for a challenge

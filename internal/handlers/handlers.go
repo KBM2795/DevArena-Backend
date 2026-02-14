@@ -131,7 +131,30 @@ func (h *Handlers) GetChallengeByIDHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, challenge)
+	// Also fetch the template data
+	template, _ := h.DB.GetTemplateByChallenge(id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"challenge": challenge,
+		"template":  template,
+	})
+}
+
+// GetChallengeTemplateHandler returns the template for a challenge
+func (h *Handlers) GetChallengeTemplateHandler(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Challenge ID required"})
+		return
+	}
+
+	template, err := h.DB.GetTemplateByChallenge(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Template not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, template)
 }
 
 // GetStarterPackHandler returns the authenticated user's starter pack challenges
@@ -308,4 +331,120 @@ func (h *Handlers) ReviewHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, review)
+}
+
+// SubmitHandler creates a new submission for evaluation
+func (h *Handlers) SubmitHandler(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req struct {
+		ChallengeID string `json:"challenge_id" binding:"required"`
+		RepoURL     string `json:"repo_url" binding:"required"`
+		Branch      string `json:"branch"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "challenge_id and repo_url are required"})
+		return
+	}
+
+	// Default branch
+	if req.Branch == "" {
+		req.Branch = "main"
+	}
+
+	// Validate repo URL (basic check)
+	if !strings.HasPrefix(req.RepoURL, "https://github.com/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only GitHub repository URLs are supported"})
+		return
+	}
+
+	// Check submission limit (max 2 per challenge)
+	count, err := h.DB.CountSubmissionsForChallenge(userID, req.ChallengeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check submission count"})
+		return
+	}
+	if count >= 2 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":    "Maximum 2 submissions allowed per challenge",
+			"attempts": count,
+			"max":      2,
+		})
+		return
+	}
+
+	// Create submission in DB
+	submissionID, err := h.DB.CreateSubmission(userID, req.ChallengeID, req.RepoURL, req.Branch)
+	if err != nil {
+		if strings.Contains(err.Error(), "user not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create submission"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"submission_id": submissionID,
+		"status":        "pending",
+		"attempt":       count + 1,
+		"remaining":     1 - count,
+		"message":       "Submission queued for evaluation",
+	})
+}
+
+// SubmissionStatusHandler returns the evaluation status for a single submission
+func (h *Handlers) SubmissionStatusHandler(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	submissionID := c.Param("id")
+	if submissionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Submission ID required"})
+		return
+	}
+
+	status, err := h.DB.GetSubmissionStatus(submissionID, userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Submission not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// ChallengeSubmissionsHandler returns all submissions for a specific challenge
+func (h *Handlers) ChallengeSubmissionsHandler(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	challengeID := c.Param("challengeId")
+	if challengeID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Challenge ID required"})
+		return
+	}
+
+	subs, err := h.DB.GetSubmissionsForChallenge(userID, challengeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch submissions"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"submissions":  subs,
+		"count":        len(subs),
+		"max_allowed":  2,
+		"can_resubmit": len(subs) < 2,
+	})
 }

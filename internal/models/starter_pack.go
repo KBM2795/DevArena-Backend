@@ -1,8 +1,6 @@
 package models
 
 import (
-	"database/sql/driver"
-	"encoding/json"
 	"time"
 )
 
@@ -60,23 +58,4 @@ type ChallengeWithProgress struct {
 	OrderIndex  int        `json:"order_index"`
 	IsCompleted bool       `json:"is_completed"`
 	Score       int        `json:"score,omitempty"`
-}
-
-// StringArray is a helper type for JSON arrays in PostgreSQL
-type StringArray []string
-
-func (s StringArray) Value() (driver.Value, error) {
-	return json.Marshal(s)
-}
-
-func (s *StringArray) Scan(value interface{}) error {
-	if value == nil {
-		*s = nil
-		return nil
-	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return nil
-	}
-	return json.Unmarshal(bytes, s)
 }

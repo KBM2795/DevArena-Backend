@@ -55,6 +55,7 @@ func (s *Server) registerPublicRoutes(rg *gin.RouterGroup) {
 	// Challenge routes (public - no auth required)
 	rg.GET("/challenges", h.GetChallengesHandler)
 	rg.GET("/challenges/:id", h.GetChallengeByIDHandler)
+	rg.GET("/challenges/:id/template", h.GetChallengeTemplateHandler)
 
 	// Tags route (for filter dropdowns)
 	rg.GET("/tags", h.GetTagsHandler)
@@ -98,4 +99,9 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 
 	// Review route (user's review for a challenge)
 	rg.GET("/me/reviews/:challengeId", h.ReviewHandler)
+
+	// Submission routes (evaluation pipeline)
+	rg.POST("/me/submissions", h.SubmitHandler)
+	rg.GET("/me/submissions/:id", h.SubmissionStatusHandler)
+	rg.GET("/me/challenges/:challengeId/submissions", h.ChallengeSubmissionsHandler)
 }

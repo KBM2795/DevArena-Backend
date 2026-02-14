@@ -21,20 +21,22 @@ type ChallengeQueryParams struct {
 
 // ChallengeResponse represents a challenge in API responses
 type ChallengeResponse struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title"`
-	Description     string   `json:"description"`
-	Difficulty      string   `json:"difficulty"`
-	Type            string   `json:"type"`
-	MaxScore        int      `json:"max_score"`
-	RepoTemplateURL string   `json:"repo_template_url,omitempty"`
-	Requirements    []string `json:"requirements"`
-	TechStack       []string `json:"tech_stack"`
-	EstimatedHours  int      `json:"estimated_hours"`
-	IsPublished     bool     `json:"is_published"`
-	Tags            []string `json:"tags"`
-	SuccessRate     float64  `json:"success_rate"`
-	CreatedAt       string   `json:"created_at"`
+	ID              string          `json:"id"`
+	Title           string          `json:"title"`
+	Description     string          `json:"description"`
+	DescriptionMD   string          `json:"description_md"`
+	Difficulty      string          `json:"difficulty"`
+	Type            string          `json:"type"`
+	MaxScore        int             `json:"max_score"`
+	RepoTemplateURL string          `json:"repo_template_url,omitempty"`
+	Requirements    []string        `json:"requirements"`
+	TechStack       []string        `json:"tech_stack"`
+	EstimatedHours  int             `json:"estimated_hours"`
+	Rubric          json.RawMessage `json:"rubric,omitempty"`
+	IsPublished     bool            `json:"is_published"`
+	Tags            []string        `json:"tags"`
+	SuccessRate     float64         `json:"success_rate"`
+	CreatedAt       string          `json:"created_at"`
 }
 
 // ChallengeListResponse is the paginated response for challenges
@@ -184,7 +186,7 @@ func (db *Database) GetChallenges(params ChallengeQueryParams) (*ChallengeListRe
 	whereClause := strings.Join(whereClauses, " AND ")
 
 	// Build ORDER BY clause
-	orderBy := "c.created_at DESC" // default: newest
+	orderBy := "c.created_at ASC" // default: oldest
 	switch params.Sort {
 	case "popular":
 		orderBy = "c.max_score DESC"
@@ -212,6 +214,7 @@ func (db *Database) GetChallenges(params ChallengeQueryParams) (*ChallengeListRe
 			c.id,
 			c.title,
 			c.description,
+			COALESCE(c.description_md, ''),
 			c.difficulty,
 			c.type,
 			c.max_score,
@@ -221,6 +224,7 @@ func (db *Database) GetChallenges(params ChallengeQueryParams) (*ChallengeListRe
 			c.estimated_hours,
 			c.is_published,
 			c.created_at,
+			COALESCE(c.rubric, '{}'::jsonb),
 			COALESCE(
 				(SELECT array_agg(t.name) FROM tags t 
 				 JOIN challenge_tags ct ON ct.tag_id = t.id 
@@ -247,11 +251,13 @@ func (db *Database) GetChallenges(params ChallengeQueryParams) (*ChallengeListRe
 		var requirementsJSON, techStackJSON string
 		var tags []string
 		var createdAt time.Time
+		var rubricBytes []byte
 
 		err := rows.Scan(
 			&c.ID,
 			&c.Title,
 			&c.Description,
+			&c.DescriptionMD,
 			&c.Difficulty,
 			&c.Type,
 			&c.MaxScore,
@@ -261,6 +267,7 @@ func (db *Database) GetChallenges(params ChallengeQueryParams) (*ChallengeListRe
 			&c.EstimatedHours,
 			&c.IsPublished,
 			&createdAt,
+			&rubricBytes,
 			&tags,
 		)
 		if err != nil {
@@ -271,6 +278,7 @@ func (db *Database) GetChallenges(params ChallengeQueryParams) (*ChallengeListRe
 		json.Unmarshal([]byte(requirementsJSON), &c.Requirements)
 		json.Unmarshal([]byte(techStackJSON), &c.TechStack)
 
+		c.Rubric = rubricBytes
 		c.Tags = tags
 		if c.Tags == nil {
 			c.Tags = []string{}
@@ -304,6 +312,7 @@ func (db *Database) GetChallengeByID(id string) (*ChallengeResponse, error) {
 			c.id,
 			c.title,
 			c.description,
+			COALESCE(c.description_md, ''),
 			c.difficulty,
 			c.type,
 			c.max_score,
@@ -313,6 +322,7 @@ func (db *Database) GetChallengeByID(id string) (*ChallengeResponse, error) {
 			c.estimated_hours,
 			c.is_published,
 			c.created_at,
+			COALESCE(c.rubric, '{}'::jsonb),
 			COALESCE(
 				(SELECT array_agg(t.name) FROM tags t 
 				 JOIN challenge_tags ct ON ct.tag_id = t.id 
@@ -327,11 +337,13 @@ func (db *Database) GetChallengeByID(id string) (*ChallengeResponse, error) {
 	var requirementsJSON, techStackJSON string
 	var tags []string
 	var createdAt time.Time
+	var rubricBytes []byte
 
 	err := db.Pool.QueryRow(ctx, query, id).Scan(
 		&c.ID,
 		&c.Title,
 		&c.Description,
+		&c.DescriptionMD,
 		&c.Difficulty,
 		&c.Type,
 		&c.MaxScore,
@@ -341,6 +353,7 @@ func (db *Database) GetChallengeByID(id string) (*ChallengeResponse, error) {
 		&c.EstimatedHours,
 		&c.IsPublished,
 		&createdAt,
+		&rubricBytes,
 		&tags,
 	)
 	if err != nil {
@@ -349,6 +362,7 @@ func (db *Database) GetChallengeByID(id string) (*ChallengeResponse, error) {
 
 	json.Unmarshal([]byte(requirementsJSON), &c.Requirements)
 	json.Unmarshal([]byte(techStackJSON), &c.TechStack)
+	c.Rubric = rubricBytes
 	c.Tags = tags
 	if c.Tags == nil {
 		c.Tags = []string{}
@@ -395,6 +409,7 @@ func (db *Database) GetStarterPackChallenges(clerkUserID string) ([]ChallengeRes
 			c.id,
 			c.title,
 			c.description,
+			COALESCE(c.description_md, ''),
 			c.difficulty,
 			c.type,
 			c.max_score,
@@ -432,6 +447,7 @@ func (db *Database) GetStarterPackChallenges(clerkUserID string) ([]ChallengeRes
 			&c.ID,
 			&c.Title,
 			&c.Description,
+			&c.DescriptionMD,
 			&c.Difficulty,
 			&c.Type,
 			&c.MaxScore,

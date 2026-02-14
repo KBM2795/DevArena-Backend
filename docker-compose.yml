@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  devarena-backend:
+    build: .
+    container_name: devarena-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_Host=db
+      - DB_Port=5432
+      - DB_User=postgres
+      - DB_Password=postgres
+      - DB_Name=devarena
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      # Webhook secrets
+      - CLERK_WEBHOOK_SECRET=${CLERK_WEBHOOK_SECRET}
+    volumes:
+      # CRITICAL: Allow backend to spawn sibling containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # CRITICAL: Align /tmp so host and container share the same path for cloned repos
+      - /tmp:/tmp
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    container_name: devarena-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=devarena
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
