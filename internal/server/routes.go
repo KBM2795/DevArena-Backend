@@ -104,4 +104,10 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 	rg.POST("/me/submissions", h.SubmitHandler)
 	rg.GET("/me/submissions/:id", h.SubmissionStatusHandler)
 	rg.GET("/me/challenges/:challengeId/submissions", h.ChallengeSubmissionsHandler)
+
+	// Notification routes
+	rg.GET("/me/notifications", h.GetNotifications)
+	rg.POST("/me/notifications/:id/read", h.MarkNotificationRead)
+	rg.POST("/me/notifications/read-all", h.MarkAllNotificationsRead)
+	rg.DELETE("/me/notifications/:id", h.DeleteNotification)
 }

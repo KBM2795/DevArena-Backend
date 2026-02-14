@@ -236,6 +236,15 @@ func (w *Worker) evaluate(sub *db.SubmissionDetail) {
 		log.Printf("[Worker] [%s] ⚠️ Failed to update user stats: %v", sub.ID, err)
 	}
 
+	// ─── Step 6: Create Notification ────────────────────
+	notifTitle := fmt.Sprintf("Challenge evaluated: %s", sub.ChallengeTitle)
+	notifMsg := fmt.Sprintf("Your submission for '%s' has been evaluated. Score: %d/%d", sub.ChallengeTitle, finalScore.FinalScore, finalScore.MaxScore)
+	notifLink := fmt.Sprintf("/challenges?id=%s", sub.ChallengeID) // Or direct to submission view if available
+
+	if err := w.db.CreateNotification(sub.UserID, notifTitle, notifMsg, "review", notifLink); err != nil {
+		log.Printf("[Worker] [%s] ⚠️ Failed to create notification: %v", sub.ID, err)
+	}
+
 	w.db.UpdateSubmissionStatus(sub.ID, "completed", &sub.Branch)
 	log.Printf("[Worker] [%s] ✅ Evaluation complete (Final Score: %d/%d)", sub.ID, finalScore.FinalScore, finalScore.MaxScore)
 }
