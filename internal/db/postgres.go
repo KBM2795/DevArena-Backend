@@ -25,7 +25,7 @@ func Connect(cfg config.Database) (*Database, error) {
 	}
 
 	// Set some pool configuration
-	poolConfig.MaxConns = 10
+	poolConfig.MaxConns = 50
 	poolConfig.MinConns = 2
 	poolConfig.MaxConnLifetime = time.Hour
 	poolConfig.MaxConnIdleTime = 30 * time.Minute
