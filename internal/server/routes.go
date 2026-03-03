@@ -6,6 +6,7 @@ import (
 
 	"github.com/KBM2795/DevArena-Backend/internal/auth/middleware"
 	"github.com/KBM2795/DevArena-Backend/internal/handlers"
+	mw "github.com/KBM2795/DevArena-Backend/internal/middleware"
 	"github.com/KBM2795/DevArena-Backend/internal/webhooks"
 	"github.com/gin-gonic/gin"
 )
@@ -101,7 +102,9 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/me/reviews/:challengeId", h.ReviewHandler)
 
 	// Submission routes (evaluation pipeline)
-	rg.POST("/me/submissions", h.SubmitHandler)
+	// Strict rate limit on submissions: 1 req/s, burst 3
+	// This is your most expensive endpoint (Docker + AI evaluation)
+	rg.POST("/me/submissions", mw.StrictRateLimiter(1, 3), h.SubmitHandler)
 	rg.GET("/me/submissions/:id", h.SubmissionStatusHandler)
 	rg.GET("/me/challenges/:challengeId/submissions", h.ChallengeSubmissionsHandler)
 

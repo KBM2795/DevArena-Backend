@@ -10,12 +10,20 @@ import (
 )
 
 type Config struct {
-	Env      string   `mapstructure:"env"`
-	Server   Server   `mapstructure:"server"`
-	Database Database `mapstructure:"database"`
-	Clerk    Clerk    `mapstructure:"clerk"`
-	GitHub   GitHub   `mapstructure:"github"`
-	Gemini   Gemini   `mapstructure:"gemini"`
+	Env       string    `mapstructure:"env"`
+	Server    Server    `mapstructure:"server"`
+	Database  Database  `mapstructure:"database"`
+	Clerk     Clerk     `mapstructure:"clerk"`
+	GitHub    GitHub    `mapstructure:"github"`
+	Gemini    Gemini    `mapstructure:"gemini"`
+	RateLimit RateLimit `mapstructure:"rate_limit"`
+}
+
+// RateLimit controls the global per-IP rate limiter.
+// Defaults: 10 requests/sec, burst of 20.
+type RateLimit struct {
+	RPS   float64 `mapstructure:"rps"`   // sustained requests per second
+	Burst int     `mapstructure:"burst"` // max burst size
 }
 
 type Gemini struct {
@@ -77,6 +85,14 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Server.Port == "" {
 		cfg.Server.Port = "8080" // Default port
+	}
+
+	// Rate limit defaults
+	if cfg.RateLimit.RPS == 0 {
+		cfg.RateLimit.RPS = 10 // 10 requests per second
+	}
+	if cfg.RateLimit.Burst == 0 {
+		cfg.RateLimit.Burst = 20 // burst of 20
 	}
 
 	return &cfg, nil

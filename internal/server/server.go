@@ -13,6 +13,7 @@ import (
 	"github.com/KBM2795/DevArena-Backend/internal/config"
 	"github.com/KBM2795/DevArena-Backend/internal/db"
 	"github.com/KBM2795/DevArena-Backend/internal/jobs"
+	mw "github.com/KBM2795/DevArena-Backend/internal/middleware"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -52,6 +53,10 @@ func NewServer(cfg *config.Config, db *db.Database) *Server {
 		AllowCredentials: false, // IMPORTANT
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// Global rate limiter — applied to ALL requests, right after CORS.
+	// Uses config values (default: 10 req/s, burst 20).
+	router.Use(mw.RateLimiter(cfg.RateLimit.RPS, cfg.RateLimit.Burst))
 
 	server := &Server{
 		router: router,

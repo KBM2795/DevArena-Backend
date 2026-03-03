@@ -15,11 +15,11 @@ import (
 )
 
 // Returns the AIReview model to be saved by the caller
-func RunAIReview(ctx context.Context, sub *db.SubmissionDetail, repoDir string, testResult *models.TestResult, cfg *config.Config) (*models.AIReview, error) {
+func RunAIReview(ctx context.Context, sub *db.SubmissionDetail, repoDir string, testResult *models.TestResult, cfg *config.Config, database *db.Database) (*models.AIReview, error) {
 	log.Printf("[AI Pipeline] Starting AI Review for submission %s...", sub.ID)
 
 	// 1. Initialize AI Client
-	ai, err := NewAIClient(cfg)
+	ai, err := NewAIClient(cfg, database)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init AI client: %v", err)
 	}
@@ -50,7 +50,7 @@ func RunAIReview(ctx context.Context, sub *db.SubmissionDetail, repoDir string, 
 	}
 
 	// 4. Call AI Generation
-	reviewOutput, err := ai.GenerateReview(ctx, input)
+	reviewOutput, promptVersionID, err := ai.GenerateReview(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("AI generation failed: %w", err)
 	}
@@ -58,6 +58,7 @@ func RunAIReview(ctx context.Context, sub *db.SubmissionDetail, repoDir string, 
 	// 5. Construct Result
 	aiReview := &models.AIReview{
 		SubmissionID:      sub.ID,
+		PromptVersionID:   promptVersionID,
 		CodeQualityScore:  reviewOutput.Scores.CodeQuality,
 		ConstraintScore:   reviewOutput.Scores.Constraints,
 		ArchitectureScore: reviewOutput.Scores.Architecture,

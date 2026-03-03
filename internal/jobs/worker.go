@@ -173,7 +173,7 @@ func (w *Worker) evaluate(sub *db.SubmissionDetail) {
 		defer cancel()
 
 		var err error
-		aiReview, err = evaluator.RunAIReview(aiCtx, sub, repoDir, result.TestResult, w.config)
+		aiReview, err = evaluator.RunAIReview(aiCtx, sub, repoDir, result.TestResult, w.config, w.db)
 		if err != nil {
 			log.Printf("[Worker] [%s] ⚠️ AI Review failed: %v", sub.ID, err)
 		} else {
