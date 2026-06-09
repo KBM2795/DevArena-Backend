@@ -2,12 +2,35 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// CreateSubmission inserts a new submission with "pending" status
-func (db *Database) CreateSubmission(userID, challengeID, repoURL, branch string) (string, error) {
+// SubmissionDetail holds all info needed for project showcases
+type SubmissionDetail struct {
+	ID                 string     `json:"id"`
+	UserID             string     `json:"user_id"`
+	ClerkUserID        string     `json:"clerk_user_id"`
+	Username           string     `json:"username"`
+	DisplayName        string     `json:"display_name"`
+	AvatarURL          string     `json:"avatar_url"`
+	ChallengeID        *string    `json:"challenge_id,omitempty"`
+	ChallengeTitle     string     `json:"challenge_title,omitempty"`
+	Title              string     `json:"title"`
+	RepoURL            string     `json:"repo_url"`
+	VideoURL           string     `json:"video_url"`
+	ProjectDescription string     `json:"project_description"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	LikeCount          int        `json:"like_count"`
+	UserHasLiked       bool       `json:"user_has_liked"`
+}
+
+// CreateOrUpdateSubmission creates a new project showcase or updates it if it's challenge-based and already exists
+func (db *Database) CreateOrUpdateSubmission(clerkUserID string, challengeID *string, title, repoURL, videoURL, description string) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -15,189 +38,231 @@ func (db *Database) CreateSubmission(userID, challengeID, repoURL, branch string
 	var internalUserID string
 	err := db.Pool.QueryRow(ctx,
 		"SELECT id FROM users WHERE clerk_user_id = $1",
-		userID,
+		clerkUserID,
 	).Scan(&internalUserID)
 	if err != nil {
-		return "", fmt.Errorf("user not found: %w", err)
+		return "", false, fmt.Errorf("user not found: %w", err)
 	}
 
-	// Generate submission ID
-	submissionID := fmt.Sprintf("sub-%s-%d", challengeID, time.Now().UnixMilli())
+	// For challenge-based submissions, check if the user has already submitted a project
+	if challengeID != nil && *challengeID != "" {
+		var existingID string
+		err := db.Pool.QueryRow(ctx, `
+			SELECT id FROM submissions 
+			WHERE user_id = $1 AND challenge_id = $2
+		`, internalUserID, *challengeID).Scan(&existingID)
 
-	// Insert submission
-	_, err = db.Pool.Exec(ctx, `
-		INSERT INTO submissions (id, user_id, challenge_id, repo_url, branch, evaluation_status)
-		VALUES ($1, $2, $3, $4, $5, 'pending')
-	`, submissionID, internalUserID, challengeID, repoURL, branch)
-	if err != nil {
-		return "", fmt.Errorf("failed to create submission: %w", err)
-	}
-
-	return submissionID, nil
-}
-
-// UpdateSubmissionStatus updates the evaluation_status and optional error message
-func (db *Database) UpdateSubmissionStatus(submissionID, status string, errorMsg *string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	query := `UPDATE submissions SET evaluation_status = $1`
-	args := []interface{}{status}
-	argIdx := 2
-
-	// Set timestamps based on status
-	switch status {
-	case "testing", "reviewing":
-		if status == "testing" {
-			query += fmt.Sprintf(", evaluation_started_at = NOW()")
+		if err == nil {
+			// Submission exists -> Update it (Edit Mode)
+			_, err = db.Pool.Exec(ctx, `
+				UPDATE submissions 
+				SET title = $1, repo_url = $2, video_url = $3, project_description = $4, updated_at = NOW()
+				WHERE id = $5
+			`, title, repoURL, videoURL, description, existingID)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to update submission: %w", err)
+			}
+			return existingID, true, nil
 		}
-	case "completed", "failed":
-		query += fmt.Sprintf(", evaluation_completed_at = NOW()")
 	}
 
-	// Optional error message
-	if errorMsg != nil {
-		query += fmt.Sprintf(", error_message = $%d", argIdx)
-		args = append(args, *errorMsg)
-		argIdx++
+	// Create new submission (either open showcase or first-time challenge submission)
+	submissionID := fmt.Sprintf("sub-%s", uuid.New().String()[:18])
+
+	_, err = db.Pool.Exec(ctx, `
+		INSERT INTO submissions (id, user_id, challenge_id, title, repo_url, video_url, project_description, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+	`, submissionID, internalUserID, challengeID, title, repoURL, videoURL, description)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to create submission: %w", err)
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d", argIdx)
-	args = append(args, submissionID)
-
-	_, err := db.Pool.Exec(ctx, query, args...)
-	return err
+	return submissionID, false, nil
 }
 
-// GetSubmissionByID returns a submission by its ID
-func (db *Database) GetSubmissionByID(submissionID string) (*SubmissionDetail, error) {
+// GetSubmissionByID returns a single submission by its ID, with like counts and user like status
+func (db *Database) GetSubmissionByID(submissionID string, currentClerkUserID string) (*SubmissionDetail, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Get internal user ID for like checking
+	var currentUserID string
+	if currentClerkUserID != "" {
+		_ = db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE clerk_user_id = $1", currentClerkUserID).Scan(&currentUserID)
+	}
 
 	var sub SubmissionDetail
-	err := db.Pool.QueryRow(ctx, `
+	var challengeTitle sql.NullString
+
+	query := `
 		SELECT 
-			s.id, s.user_id, s.challenge_id, s.repo_url, s.branch,
-			s.evaluation_status, COALESCE(s.error_message, ''),
-			c.title, c.max_score,
-			COALESCE(ct.test_repo_url, '') as test_repo_url
+			s.id, s.user_id, u.clerk_user_id, COALESCE(u.username, ''), COALESCE(u.display_name, ''), COALESCE(u.avatar_url, ''),
+			s.challenge_id, c.title as challenge_title, COALESCE(s.title, ''), s.repo_url, COALESCE(s.video_url, ''), COALESCE(s.project_description, ''),
+			s.created_at, s.updated_at,
+			(SELECT COUNT(*) FROM submission_likes WHERE submission_id = s.id) as like_count,
+			EXISTS(SELECT 1 FROM submission_likes WHERE submission_id = s.id AND user_id = $2) as user_has_liked
 		FROM submissions s
-		JOIN challenges c ON s.challenge_id = c.id
-		LEFT JOIN challenge_templates ct ON c.id = ct.challenge_id
+		JOIN users u ON s.user_id = u.id
+		LEFT JOIN challenges c ON s.challenge_id = c.id
 		WHERE s.id = $1
-	`, submissionID).Scan(
-		&sub.ID, &sub.UserID, &sub.ChallengeID, &sub.RepoURL, &sub.Branch,
-		&sub.EvaluationStatus, &sub.ErrorMessage,
-		&sub.ChallengeTitle, &sub.MaxScore,
-		&sub.TestRepoURL,
+	`
+	err := db.Pool.QueryRow(ctx, query, submissionID, currentUserID).Scan(
+		&sub.ID, &sub.UserID, &sub.ClerkUserID, &sub.Username, &sub.DisplayName, &sub.AvatarURL,
+		&sub.ChallengeID, &challengeTitle, &sub.Title, &sub.RepoURL, &sub.VideoURL, &sub.ProjectDescription,
+		&sub.CreatedAt, &sub.UpdatedAt,
+		&sub.LikeCount, &sub.UserHasLiked,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if challengeTitle.Valid {
+		sub.ChallengeTitle = challengeTitle.String
 	}
 
 	return &sub, nil
 }
 
-// SubmissionDetail holds all info the evaluator needs
-type SubmissionDetail struct {
-	ID               string `json:"id"`
-	UserID           string `json:"user_id"`
-	ChallengeID      string `json:"challenge_id"`
-	RepoURL          string `json:"repo_url"`
-	Branch           string `json:"branch"`
-	EvaluationStatus string `json:"evaluation_status"`
-	ErrorMessage     string `json:"error_message,omitempty"`
-	ChallengeTitle   string `json:"challenge_title"`
-	MaxScore         int    `json:"max_score"`
-	TestRepoURL      string `json:"test_repo_url"`
-}
-
-// GetSubmissionStatus returns just the status for polling
-func (db *Database) GetSubmissionStatus(submissionID, clerkUserID string) (*SubmissionStatusResponse, error) {
+// GetSubmissionsForChallenge returns all user submissions for a specific challenge (public)
+func (db *Database) GetSubmissionsForChallenge(challengeID string, currentClerkUserID string) ([]SubmissionDetail, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var resp SubmissionStatusResponse
-	err := db.Pool.QueryRow(ctx, `
+	// Get internal user ID for like checking
+	var currentUserID string
+	if currentClerkUserID != "" {
+		_ = db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE clerk_user_id = $1", currentClerkUserID).Scan(&currentUserID)
+	}
+
+	query := `
 		SELECT 
-			s.id, s.evaluation_status, COALESCE(s.error_message, ''),
-			COALESCE(sc.final_score, 0), c.max_score
+			s.id, s.user_id, u.clerk_user_id, COALESCE(u.username, ''), COALESCE(u.display_name, ''), COALESCE(u.avatar_url, ''),
+			s.challenge_id, c.title as challenge_title, COALESCE(s.title, ''), s.repo_url, COALESCE(s.video_url, ''), COALESCE(s.project_description, ''),
+			s.created_at, s.updated_at,
+			(SELECT COUNT(*) FROM submission_likes WHERE submission_id = s.id) as like_count,
+			EXISTS(SELECT 1 FROM submission_likes WHERE submission_id = s.id AND user_id = $2) as user_has_liked
 		FROM submissions s
 		JOIN users u ON s.user_id = u.id
-		JOIN challenges c ON s.challenge_id = c.id
-		LEFT JOIN submission_scores sc ON s.id = sc.submission_id
-		WHERE s.id = $1 AND u.clerk_user_id = $2
-	`, submissionID, clerkUserID).Scan(
-		&resp.ID, &resp.EvaluationStatus, &resp.ErrorMessage,
-		&resp.FinalScore, &resp.MaxScore,
-	)
+		LEFT JOIN challenges c ON s.challenge_id = c.id
+		WHERE s.challenge_id = $1
+		ORDER BY like_count DESC, s.created_at DESC
+	`
+
+	rows, err := db.Pool.Query(ctx, query, challengeID, currentUserID)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	return &resp, nil
-}
-
-// SubmissionStatusResponse is returned when polling status
-type SubmissionStatusResponse struct {
-	ID               string `json:"id"`
-	EvaluationStatus string `json:"evaluation_status"`
-	ErrorMessage     string `json:"error_message,omitempty"`
-	FinalScore       int    `json:"final_score"`
-	MaxScore         int    `json:"max_score"`
-}
-
-// RecoverStuckSubmissions resets any submissions stuck in "testing" or "reviewing"
-// back to "pending" — called on server startup to recover from crashes
-func (db *Database) RecoverStuckSubmissions() (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	tag, err := db.Pool.Exec(ctx, `
-		UPDATE submissions 
-		SET evaluation_status = 'pending',
-		    error_message = 'Retrying after server restart'
-		WHERE evaluation_status IN ('testing', 'reviewing', 'generating')
-	`)
-	if err != nil {
-		return 0, err
+	var subs []SubmissionDetail
+	for rows.Next() {
+		var sub SubmissionDetail
+		var challengeTitle sql.NullString
+		err := rows.Scan(
+			&sub.ID, &sub.UserID, &sub.ClerkUserID, &sub.Username, &sub.DisplayName, &sub.AvatarURL,
+			&sub.ChallengeID, &challengeTitle, &sub.Title, &sub.RepoURL, &sub.VideoURL, &sub.ProjectDescription,
+			&sub.CreatedAt, &sub.UpdatedAt,
+			&sub.LikeCount, &sub.UserHasLiked,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if challengeTitle.Valid {
+			sub.ChallengeTitle = challengeTitle.String
+		}
+		subs = append(subs, sub)
 	}
 
-	return tag.RowsAffected(), nil
+	return subs, nil
 }
 
-// ClaimNextPending atomically claims the next pending submission for processing
-// Uses UPDATE ... RETURNING to prevent two workers from grabbing the same job
-func (db *Database) ClaimNextPending() (*SubmissionDetail, error) {
+// GetAllShowcases returns ALL paginated submissions (open projects + challenge submissions).
+// search is case-insensitive and filters title, description, username, display_name, challenge title.
+// Pass limit=0 to return all results (no limit).
+func (db *Database) GetOpenShowcases(currentClerkUserID string, search string, offset, limit int) ([]SubmissionDetail, int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var sub SubmissionDetail
-	err := db.Pool.QueryRow(ctx, `
-		UPDATE submissions 
-		SET evaluation_status = 'testing',
-		    evaluation_started_at = NOW()
-		WHERE id = (
-			SELECT s.id FROM submissions s
-			WHERE s.evaluation_status = 'pending'
-			ORDER BY s.created_at ASC
-			LIMIT 1
-			FOR UPDATE SKIP LOCKED
+	// Get internal user ID for like checking
+	var currentUserID string
+	if currentClerkUserID != "" {
+		_ = db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE clerk_user_id = $1", currentClerkUserID).Scan(&currentUserID)
+	}
+
+	// Count query — $1 = search (empty string means "no filter")
+	countQuery := `
+		SELECT COUNT(*)
+		FROM submissions s
+		JOIN users u ON s.user_id = u.id
+		LEFT JOIN challenges c ON s.challenge_id = c.id
+		WHERE (
+			$1 = ''
+			OR s.title ILIKE '%' || $1 || '%'
+			OR s.project_description ILIKE '%' || $1 || '%'
+			OR u.username ILIKE '%' || $1 || '%'
+			OR u.display_name ILIKE '%' || $1 || '%'
+			OR c.title ILIKE '%' || $1 || '%'
 		)
-		RETURNING id
-	`).Scan(&sub.ID)
-	if err != nil {
-		return nil, err // no rows = no pending submissions
+	`
+
+	var total int
+	if err := db.Pool.QueryRow(ctx, countQuery, search).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 
-	// Now fetch the full submission detail
-	fullSub, err := db.GetSubmissionByID(sub.ID)
+	// Data query — params: $1=currentUserID, $2=search, $3=limit, $4=offset
+	dataQuery := `
+		SELECT
+			s.id, s.user_id, u.clerk_user_id, COALESCE(u.username, ''), COALESCE(u.display_name, ''), COALESCE(u.avatar_url, ''),
+			s.challenge_id, c.title as challenge_title, COALESCE(s.title, ''), s.repo_url, COALESCE(s.video_url, ''), COALESCE(s.project_description, ''),
+			s.created_at, s.updated_at,
+			(SELECT COUNT(*) FROM submission_likes WHERE submission_id = s.id) as like_count,
+			EXISTS(SELECT 1 FROM submission_likes WHERE submission_id = s.id AND user_id = $1) as user_has_liked
+		FROM submissions s
+		JOIN users u ON s.user_id = u.id
+		LEFT JOIN challenges c ON s.challenge_id = c.id
+		WHERE (
+			$2 = ''
+			OR s.title ILIKE '%' || $2 || '%'
+			OR s.project_description ILIKE '%' || $2 || '%'
+			OR u.username ILIKE '%' || $2 || '%'
+			OR u.display_name ILIKE '%' || $2 || '%'
+			OR c.title ILIKE '%' || $2 || '%'
+		)
+		ORDER BY like_count DESC, s.created_at DESC
+		LIMIT NULLIF($3::bigint, 0)
+		OFFSET $4
+	`
+
+	rows, err := db.Pool.Query(ctx, dataQuery, currentUserID, search, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var subs []SubmissionDetail
+	for rows.Next() {
+		var sub SubmissionDetail
+		var challengeTitle sql.NullString
+		err := rows.Scan(
+			&sub.ID, &sub.UserID, &sub.ClerkUserID, &sub.Username, &sub.DisplayName, &sub.AvatarURL,
+			&sub.ChallengeID, &challengeTitle, &sub.Title, &sub.RepoURL, &sub.VideoURL, &sub.ProjectDescription,
+			&sub.CreatedAt, &sub.UpdatedAt,
+			&sub.LikeCount, &sub.UserHasLiked,
+		)
+		if err != nil {
+			return nil, 0, err
+		}
+		if challengeTitle.Valid {
+			sub.ChallengeTitle = challengeTitle.String
+		}
+		subs = append(subs, sub)
 	}
 
-	return fullSub, nil
+	return subs, total, nil
 }
+
+
 
 // CountSubmissionsForChallenge returns how many submissions a user has for a challenge
 func (db *Database) CountSubmissionsForChallenge(clerkUserID, challengeID string) (int, error) {
@@ -209,7 +274,6 @@ func (db *Database) CountSubmissionsForChallenge(clerkUserID, challengeID string
 		SELECT COUNT(*) FROM submissions s
 		JOIN users u ON s.user_id = u.id
 		WHERE u.clerk_user_id = $1 AND s.challenge_id = $2
-		AND s.evaluation_status != 'failed'
 	`, clerkUserID, challengeID).Scan(&count)
 	if err != nil {
 		return 0, err
@@ -218,51 +282,55 @@ func (db *Database) CountSubmissionsForChallenge(clerkUserID, challengeID string
 	return count, nil
 }
 
-// SubmissionSummary is a lightweight submission entry for listing
-type SubmissionSummary struct {
-	ID               string `json:"id"`
-	EvaluationStatus string `json:"evaluation_status"`
-	FinalScore       int    `json:"final_score"`
-	ErrorMessage     string `json:"error_message,omitempty"`
-	CreatedAt        string `json:"created_at"`
-	Attempt          int    `json:"attempt"`
-}
-
-// GetSubmissionsForChallenge returns all submissions for a user+challenge pair
-func (db *Database) GetSubmissionsForChallenge(clerkUserID, challengeID string) ([]SubmissionSummary, error) {
+// GetUserSubmissions returns all showcases submitted by a specific user
+func (db *Database) GetUserSubmissions(clerkUserID string) ([]SubmissionDetail, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rows, err := db.Pool.Query(ctx, `
-		SELECT s.id, s.evaluation_status, 
-		       COALESCE(sc.final_score, 0),
-		       COALESCE(s.error_message, ''),
-		       s.created_at
+	// Get internal user ID
+	var internalUserID string
+	err := db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE clerk_user_id = $1", clerkUserID).Scan(&internalUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+		SELECT 
+			s.id, s.user_id, u.clerk_user_id, COALESCE(u.username, ''), COALESCE(u.display_name, ''), COALESCE(u.avatar_url, ''),
+			s.challenge_id, c.title as challenge_title, COALESCE(s.title, ''), s.repo_url, COALESCE(s.video_url, ''), COALESCE(s.project_description, ''),
+			s.created_at, s.updated_at,
+			(SELECT COUNT(*) FROM submission_likes WHERE submission_id = s.id) as like_count,
+			EXISTS(SELECT 1 FROM submission_likes WHERE submission_id = s.id AND user_id = $2) as user_has_liked
 		FROM submissions s
 		JOIN users u ON s.user_id = u.id
-		LEFT JOIN submission_scores sc ON s.id = sc.submission_id
-		WHERE u.clerk_user_id = $1 AND s.challenge_id = $2
-		AND s.evaluation_status != 'failed'
-		ORDER BY s.created_at ASC
-	`, clerkUserID, challengeID)
+		LEFT JOIN challenges c ON s.challenge_id = c.id
+		WHERE s.user_id = $1
+		ORDER BY s.created_at DESC
+	`
+
+	rows, err := db.Pool.Query(ctx, query, internalUserID, internalUserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var subs []SubmissionSummary
-	attempt := 1
+	var subs []SubmissionDetail
 	for rows.Next() {
-		var s SubmissionSummary
-		var createdAt time.Time
-		err := rows.Scan(&s.ID, &s.EvaluationStatus, &s.FinalScore, &s.ErrorMessage, &createdAt)
+		var sub SubmissionDetail
+		var challengeTitle sql.NullString
+		err := rows.Scan(
+			&sub.ID, &sub.UserID, &sub.ClerkUserID, &sub.Username, &sub.DisplayName, &sub.AvatarURL,
+			&sub.ChallengeID, &challengeTitle, &sub.Title, &sub.RepoURL, &sub.VideoURL, &sub.ProjectDescription,
+			&sub.CreatedAt, &sub.UpdatedAt,
+			&sub.LikeCount, &sub.UserHasLiked,
+		)
 		if err != nil {
 			return nil, err
 		}
-		s.CreatedAt = createdAt.Format(time.RFC3339)
-		s.Attempt = attempt
-		attempt++
-		subs = append(subs, s)
+		if challengeTitle.Valid {
+			sub.ChallengeTitle = challengeTitle.String
+		}
+		subs = append(subs, sub)
 	}
 
 	return subs, nil

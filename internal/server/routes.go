@@ -56,7 +56,21 @@ func (s *Server) registerPublicRoutes(rg *gin.RouterGroup) {
 	// Challenge routes (public - no auth required)
 	rg.GET("/challenges", h.GetChallengesHandler)
 	rg.GET("/challenges/:id", h.GetChallengeByIDHandler)
-	rg.GET("/challenges/:id/template", h.GetChallengeTemplateHandler)
+
+	// Submissions for a challenge - anyone can browse
+	rg.GET("/challenges/:id/submissions", h.ChallengeSubmissionsHandler)
+
+	// Open showcase - anyone can browse
+	rg.GET("/showcase", h.GetOpenShowcasesHandler)
+
+	// Single submission detail (public, like count included)
+	rg.GET("/submissions/:id", h.SubmissionStatusHandler)
+
+	// Like status for a submission (no auth needed to read)
+	rg.GET("/submissions/:id/like", h.GetLikeStatusHandler)
+
+	// Comments - public read
+	rg.GET("/comments", h.GetCommentsHandler)
 
 	// Tags route (for filter dropdowns)
 	rg.GET("/tags", h.GetTagsHandler)
@@ -95,18 +109,23 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 
 	// Stats routes
 	rg.GET("/me/stats", h.StatsHandler)
-	rg.GET("/me/submissions", h.RecentSubmissionsHandler)
 	rg.GET("/me/tech-focus", h.TechFocusHandler)
 
-	// Review route (user's review for a challenge)
-	rg.GET("/me/reviews/:challengeId", h.ReviewHandler)
+	rg.GET("/me/submissions", h.RecentSubmissionsHandler)
+	rg.GET("/me/showcase", h.GetUserShowcaseHandler)
+	rg.GET("/me/challenges/:id/submissions", h.ChallengeSubmissionsHandler)
 
-	// Submission routes (evaluation pipeline)
-	// Strict rate limit on submissions: 1 req/s, burst 3
-	// This is your most expensive endpoint (Docker + AI evaluation)
-	rg.POST("/me/submissions", mw.StrictRateLimiter(1, 3), h.SubmitHandler)
+	rg.POST("/me/submissions", mw.StrictRateLimiter(5, 10), h.SubmitHandler)
+	rg.POST("/me/submissions/upload-video", h.UploadVideoHandler)
+
+	// Single submission detail (auth version – needed for like status of logged-in user)
 	rg.GET("/me/submissions/:id", h.SubmissionStatusHandler)
-	rg.GET("/me/challenges/:challengeId/submissions", h.ChallengeSubmissionsHandler)
+
+	// Like / unlike a submission (toggle)
+	rg.POST("/submissions/:id/like", h.ToggleLikeHandler)
+
+	// Post a comment (challenge or project level)
+	rg.POST("/comments", h.PostCommentHandler)
 
 	// Notification routes
 	rg.GET("/me/notifications", h.GetNotifications)

@@ -12,7 +12,6 @@ import (
 
 	"github.com/KBM2795/DevArena-Backend/internal/config"
 	"github.com/KBM2795/DevArena-Backend/internal/db"
-	"github.com/KBM2795/DevArena-Backend/internal/jobs"
 	mw "github.com/KBM2795/DevArena-Backend/internal/middleware"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -23,7 +22,6 @@ type Server struct {
 	db         *db.Database
 	config     *config.Config
 	httpServer *http.Server
-	worker     *jobs.Worker
 }
 
 func NewServer(cfg *config.Config, db *db.Database) *Server {
@@ -85,10 +83,6 @@ func (s *Server) Run() error {
 		serverErrors <- s.httpServer.ListenAndServe()
 	}()
 
-	// Start the evaluation worker goroutine
-	s.worker = jobs.NewWorker(s.db, s.config)
-	s.worker.Start()
-
 	// Channel to listen for interrupt signals
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
@@ -102,11 +96,6 @@ func (s *Server) Run() error {
 
 	case sig := <-shutdown:
 		log.Printf("Received signal %v, starting graceful shutdown...", sig)
-
-		// Stop the evaluation worker first (waits for current job to finish)
-		if s.worker != nil {
-			s.worker.Stop()
-		}
 
 		// Create context with timeout for shutdown
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

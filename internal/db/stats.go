@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -20,7 +21,7 @@ type UserStats struct {
 // RecentSubmission represents a submission with challenge info
 type RecentSubmission struct {
 	ID               string   `json:"id"`
-	ChallengeID      string   `json:"challenge_id"`
+	ChallengeID      string   `json:"challenge_id,omitempty"`
 	Title            string   `json:"title"`
 	Difficulty       string   `json:"difficulty"`
 	FinalScore       int      `json:"final_score"`
@@ -59,25 +60,17 @@ func (db *Database) GetUserStats(clerkUserID string) (*UserStats, error) {
 		SELECT COUNT(*) FROM submissions WHERE user_id = $1
 	`, internalUserID).Scan(&stats.TotalSubmissions)
 
-	// Calculate acceptance rate (completed submissions with score >= 70%)
-	var reviewed, passed int
-	db.Pool.QueryRow(ctx, `
-		SELECT 
-			COUNT(*) FILTER (WHERE s.evaluation_status = 'completed'),
-			COUNT(*) FILTER (WHERE s.evaluation_status = 'completed' AND COALESCE(sc.final_score, 0) >= 70)
-		FROM submissions s
-		LEFT JOIN submission_scores sc ON s.id = sc.submission_id
-		WHERE s.user_id = $1
-	`, internalUserID).Scan(&reviewed, &passed)
-
-	if reviewed > 0 {
-		stats.AcceptanceRate = float64(passed) / float64(reviewed) * 100
+	// Since AI reviews are removed, acceptance rate is set to 100.0 if they have submitted anything
+	if stats.TotalSubmissions > 0 {
+		stats.AcceptanceRate = 100.0
+	} else {
+		stats.AcceptanceRate = 0.0
 	}
 
 	return &stats, nil
 }
 
-// GetRecentSubmissions returns the user's recent submissions with challenge details
+// GetRecentSubmissions returns the user's recent submissions
 func (db *Database) GetRecentSubmissions(clerkUserID string, limit int) ([]RecentSubmission, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -95,17 +88,15 @@ func (db *Database) GetRecentSubmissions(clerkUserID string, limit int) ([]Recen
 	query := `
 		SELECT 
 			s.id,
-			s.challenge_id,
-			c.title,
-			c.difficulty,
-			COALESCE(sc.final_score, 0),
-			c.max_score,
-			s.evaluation_status,
+			COALESCE(s.challenge_id, ''),
+			COALESCE(c.title, 'Open Showcase'),
+			COALESCE(c.difficulty, 'Open'),
+			CASE WHEN s.challenge_id IS NOT NULL THEN 100 ELSE 50 END as score,
+			CASE WHEN s.challenge_id IS NOT NULL THEN 100 ELSE 50 END as max_score,
 			c.tech_stack,
 			TO_CHAR(s.created_at, 'YYYY-MM-DD') as submitted_at
 		FROM submissions s
-		JOIN challenges c ON s.challenge_id = c.id
-		LEFT JOIN submission_scores sc ON s.id = sc.submission_id
+		LEFT JOIN challenges c ON s.challenge_id = c.id
 		WHERE s.user_id = $1
 		ORDER BY s.created_at DESC
 		LIMIT $2
@@ -121,19 +112,26 @@ func (db *Database) GetRecentSubmissions(clerkUserID string, limit int) ([]Recen
 	for rows.Next() {
 		var sub RecentSubmission
 		var techStackJSON []byte
+		var challengeID sql.NullString
+
 		if err := rows.Scan(
 			&sub.ID,
-			&sub.ChallengeID,
+			&challengeID,
 			&sub.Title,
 			&sub.Difficulty,
 			&sub.FinalScore,
 			&sub.MaxScore,
-			&sub.EvaluationStatus,
 			&techStackJSON,
 			&sub.SubmittedAt,
 		); err != nil {
 			return nil, err
 		}
+
+		if challengeID.Valid {
+			sub.ChallengeID = challengeID.String
+		}
+		sub.EvaluationStatus = "completed"
+
 		if len(techStackJSON) > 0 {
 			json.Unmarshal(techStackJSON, &sub.TechStack)
 		}
@@ -168,15 +166,13 @@ func (db *Database) GetUserTechFocus(clerkUserID string) ([]TechFocus, error) {
 		return nil, err
 	}
 
-	// Get all tech_stack from submitted challenges and count occurrences
-	// Use jsonb_array_elements_text since tech_stack is stored as JSON array
 	query := `
 		SELECT tech, COUNT(*) as count
 		FROM (
 			SELECT DISTINCT s.challenge_id, jsonb_array_elements_text(c.tech_stack::jsonb) as tech
 			FROM submissions s
 			JOIN challenges c ON s.challenge_id = c.id
-			WHERE s.user_id = $1 AND s.evaluation_status = 'completed'
+			WHERE s.user_id = $1
 		) sub
 		GROUP BY tech
 		ORDER BY count DESC

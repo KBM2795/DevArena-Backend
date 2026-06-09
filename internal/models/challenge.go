@@ -56,9 +56,8 @@ type Challenge struct {
 	SubmissionCount int     `json:"submission_count" gorm:"-"`
 
 	// Relationships
-	Tags        []Tag              `json:"tags" gorm:"many2many:challenge_tags"`
-	Submissions []Submission       `json:"submissions,omitempty" gorm:"foreignKey:ChallengeID"`
-	Template    *ChallengeTemplate `json:"template,omitempty" gorm:"foreignKey:ChallengeID;references:ID"`
+	Tags        []Tag        `json:"tags" gorm:"many2many:challenge_tags"`
+	Submissions []Submission `json:"submissions,omitempty" gorm:"foreignKey:ChallengeID"`
 }
 
 // Requirements represents the review criteria for a challenge

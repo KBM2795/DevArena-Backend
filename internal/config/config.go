@@ -17,6 +17,7 @@ type Config struct {
 	GitHub    GitHub    `mapstructure:"github"`
 	Gemini    Gemini    `mapstructure:"gemini"`
 	RateLimit RateLimit `mapstructure:"rate_limit"`
+	Supabase  Supabase  `mapstructure:"supabase"`
 }
 
 // RateLimit controls the global per-IP rate limiter.
@@ -59,6 +60,11 @@ func LoadConfig() (*Config, error) {
 		_ = godotenv.Load() // Ignore error if .env doesn't exist
 	}
 
+	// Unset placeholders so Viper falls back to config files like local.yaml
+	if os.Getenv("SUPABASE_ANON_KEY") == "your_supabase_anon_key_here" {
+		os.Unsetenv("SUPABASE_ANON_KEY")
+	}
+
 	viper.SetConfigName("local")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./config")
@@ -95,5 +101,26 @@ func LoadConfig() (*Config, error) {
 		cfg.RateLimit.Burst = 20 // burst of 20
 	}
 
+	// Propagate config properties back to environment variables so that standard library os.Getenv calls get the resolved values
+	if cfg.Supabase.URL != "" {
+		os.Setenv("SUPABASE_URL", cfg.Supabase.URL)
+	}
+	if cfg.Supabase.Key != "" {
+		os.Setenv("SUPABASE_ANON_KEY", cfg.Supabase.Key)
+	}
+	if cfg.Supabase.ServiceRoleKey != "" {
+		os.Setenv("SUPABASE_SERVICE_ROLE_KEY", cfg.Supabase.ServiceRoleKey)
+	}
+	if cfg.Supabase.Bucket != "" {
+		os.Setenv("SUPABASE_BUCKET", cfg.Supabase.Bucket)
+	}
+
 	return &cfg, nil
+}
+
+type Supabase struct {
+    URL             string `mapstructure:"url"`
+    Key             string `mapstructure:"anon_key"`
+    ServiceRoleKey  string `mapstructure:"service_role_key"`
+    Bucket          string `mapstructure:"bucket"`
 }
