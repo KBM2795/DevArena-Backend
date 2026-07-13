@@ -32,12 +32,17 @@ func NewServer(cfg *config.Config, db *db.Database) *Server {
 
 	router := gin.Default()
 
-	router.Use(cors.New(cors.Config{
-		AllowOrigins: []string{
+	allowedOrigins := cfg.Server.AllowedOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{
 			"http://localhost:3000",
 			"https://devarena.dev",
-			"https://dev-arena-ten.vercel.app", // production
-		},
+			"https://dev-arena-ten.vercel.app",
+		}
+	}
+
+	router.Use(cors.New(cors.Config{
+		AllowOrigins: allowedOrigins,
 		AllowMethods: []string{
 			"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS",
 		},

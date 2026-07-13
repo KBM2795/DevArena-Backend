@@ -32,7 +32,8 @@ type Gemini struct {
 }
 
 type Server struct {
-	Port string `mapstructure:"port"`
+	Port           string   `mapstructure:"port"`
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
 }
 
 type Database struct {
@@ -91,6 +92,15 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Server.Port == "" {
 		cfg.Server.Port = "8080" // Default port
+	}
+
+	// Parse ALLOWED_ORIGINS environment variable if set (comma-separated list)
+	if envOrigins := os.Getenv("ALLOWED_ORIGINS"); envOrigins != "" {
+		origins := strings.Split(envOrigins, ",")
+		for i, origin := range origins {
+			origins[i] = strings.TrimSpace(origin)
+		}
+		cfg.Server.AllowedOrigins = origins
 	}
 
 	// Rate limit defaults
