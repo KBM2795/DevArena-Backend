@@ -19,12 +19,15 @@ type OnboardingData struct {
 
 // SaveOnboardingData saves user onboarding data to the starter_packs table
 // and auto-assigns challenges based on the user's selected paths and technologies
-func (db *Database) SaveOnboardingData(clerkUserID string, onboardingData struct {
+func (db *Database) SaveOnboardingData(clerkUserID string, email string, onboardingData struct {
 	Experience   string   `json:"experience"`
 	Paths        []string `json:"paths"`
 	Technologies []string `json:"technologies"`
+	Username     string   `json:"username"`
+	DisplayName  string   `json:"display_name"`
+	AvatarURL    string   `json:"avatar_url"`
 }) error {
-	log.Printf("[Onboarding] Starting for user: %s, experience: %s", clerkUserID, onboardingData.Experience)
+	log.Printf("[Onboarding] Starting for user: %s, email: %s, experience: %s", clerkUserID, email, onboardingData.Experience)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -36,7 +39,62 @@ func (db *Database) SaveOnboardingData(clerkUserID string, onboardingData struct
 		clerkUserID,
 	).Scan(&internalUserID)
 	if err != nil {
-		return fmt.Errorf("failed to find user: %w", err)
+		// User record not found (e.g. Clerk webhook delay/failure in local dev).
+		// Auto-create user stub just-in-time so onboarding doesn't fail.
+		internalUserID = uuid.New().String()
+		fallbackEmail := email
+		if fallbackEmail == "" {
+			fallbackEmail = fmt.Sprintf("%s@devarena.placeholder", clerkUserID)
+		}
+		displayName := onboardingData.DisplayName
+		if displayName == "" {
+			displayName = "Developer"
+		}
+		var usernamePtr *string
+		if onboardingData.Username != "" {
+			usernamePtr = &onboardingData.Username
+		}
+		var avatarUrlPtr *string
+		if onboardingData.AvatarURL != "" {
+			avatarUrlPtr = &onboardingData.AvatarURL
+		}
+
+		_, insertErr := db.Pool.Exec(ctx, `
+			INSERT INTO users (id, clerk_user_id, email, username, display_name, avatar_url, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+			ON CONFLICT (clerk_user_id) DO UPDATE SET
+				email = COALESCE(NULLIF(users.email, ''), EXCLUDED.email),
+				username = COALESCE(NULLIF(EXCLUDED.username, ''), users.username),
+				display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), users.display_name),
+				avatar_url = COALESCE(NULLIF(EXCLUDED.avatar_url, ''), users.avatar_url),
+				updated_at = NOW()
+		`, internalUserID, clerkUserID, fallbackEmail, usernamePtr, displayName, avatarUrlPtr)
+		if insertErr != nil {
+			return fmt.Errorf("failed to auto-create user stub during onboarding: %w", insertErr)
+		}
+	} else {
+		// If user record already exists, update their profile with Clerk info if they are missing
+		var usernamePtr *string
+		if onboardingData.Username != "" {
+			usernamePtr = &onboardingData.Username
+		}
+		var avatarUrlPtr *string
+		if onboardingData.AvatarURL != "" {
+			avatarUrlPtr = &onboardingData.AvatarURL
+		}
+		displayName := onboardingData.DisplayName
+
+		_, updateErr := db.Pool.Exec(ctx, `
+			UPDATE users SET
+				username = COALESCE(NULLIF($2, ''), username),
+				display_name = COALESCE(NULLIF($3, ''), display_name),
+				avatar_url = COALESCE(NULLIF($4, ''), avatar_url),
+				updated_at = NOW()
+			WHERE id = $1
+		`, internalUserID, usernamePtr, displayName, avatarUrlPtr)
+		if updateErr != nil {
+			log.Printf("[Onboarding] Failed to update user profile during onboarding: %v", updateErr)
+		}
 	}
 
 	// Convert slices to JSON for JSONB columns

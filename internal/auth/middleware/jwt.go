@@ -111,6 +111,42 @@ func (m *JWTMiddleware) Authenticate() gin.HandlerFunc {
 	}
 }
 
+// AuthenticateOptional returns a Gin middleware function that tries to authenticate the user but does not fail if they are not authenticated.
+func (m *JWTMiddleware) AuthenticateOptional() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var tokenString string
+
+		// Try to get token from Authorization header first (cross-origin)
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
+				tokenString = parts[1]
+			}
+		}
+
+		// If no Authorization header, try __session cookie (same-origin)
+		if tokenString == "" {
+			tokenString, _ = c.Cookie("__session")
+		}
+
+		if tokenString != "" {
+			// Parse and validate the token
+			claims, err := m.validateToken(tokenString)
+			if err == nil {
+				fmt.Println("JWT Middleware (Optional): User ID: ", claims.Subject)
+				// Set claims in context
+				c.Set(string(UserIDKey), claims.Subject) // sub claim contains user ID
+				c.Set(string(SessionIDKey), claims.SessionID)
+				c.Set(string(ClaimsKey), claims)
+			}
+		}
+
+		c.Next()
+	}
+}
+
+
 // validateToken validates the JWT token using Clerk's PEM public key
 func (m *JWTMiddleware) validateToken(tokenString string) (*ClerkClaims, error) {
 	// Parse the token with claims

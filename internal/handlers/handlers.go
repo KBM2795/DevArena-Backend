@@ -38,6 +38,9 @@ func (h *Handlers) OnboardingHandler(c *gin.Context) {
 		Experience   string   `json:"experience"`
 		Paths        []string `json:"paths"`
 		Technologies []string `json:"technologies"`
+		Username     string   `json:"username"`
+		DisplayName  string   `json:"display_name"`
+		AvatarURL    string   `json:"avatar_url"`
 	}
 
 	if err := c.ShouldBindJSON(&onboardingData); err != nil {
@@ -45,8 +48,14 @@ func (h *Handlers) OnboardingHandler(c *gin.Context) {
 		return
 	}
 
-	// Save onboarding data to database
-	if err := h.DB.SaveOnboardingData(userID, onboardingData); err != nil {
+	// Extract email from JWT claims
+	email := ""
+	if claims, ok := middleware.GetClaims(c); ok {
+		email = claims.Email
+	}
+
+	// Save onboarding data to database (passing email for just-in-time user creation if needed)
+	if err := h.DB.SaveOnboardingData(userID, email, onboardingData); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save onboarding data"})
 		return
 	}
@@ -380,11 +389,7 @@ func (h *Handlers) SubmitHandler(c *gin.Context) {
 
 // SubmissionStatusHandler returns details for a single submission
 func (h *Handlers) SubmissionStatusHandler(c *gin.Context) {
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
+	userID, _ := middleware.GetUserID(c)
 
 	submissionID := c.Param("id")
 	if submissionID == "" {
@@ -424,4 +429,32 @@ func (h *Handlers) ChallengeSubmissionsHandler(c *gin.Context) {
 		"submissions": subs,
 		"count":       len(subs),
 	})
+}
+
+// DeleteSubmissionHandler deletes a submission for the authenticated user
+// DELETE /me/submissions/:id
+func (h *Handlers) DeleteSubmissionHandler(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	submissionID := c.Param("id")
+	if submissionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Submission ID required"})
+		return
+	}
+
+	err := h.DB.DeleteSubmission(userID, submissionID)
+	if err != nil {
+		if err.Error() == "unauthorized to delete this submission" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to delete this project"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete submission"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Project showcase deleted successfully"})
 }

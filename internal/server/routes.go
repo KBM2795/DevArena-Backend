@@ -22,13 +22,23 @@ func (s *Server) RegisterRoutes() {
 	// API v1 routes
 	v1 := s.router.Group("/api/v1")
 	{
+		jwtMiddleware, err := middleware.NewJWTMiddleware(s.config.Clerk.PEMPublicKey, s.config.Clerk.AuthorizedParties)
+		if err != nil {
+			fmt.Printf("WARNING: Failed to initialize JWTMiddleware: %v\n", err)
+		}
+
+		if jwtMiddleware != nil {
+			v1.Use(jwtMiddleware.AuthenticateOptional())
+		}
+
 		// Public routes (no auth required)
 		s.registerPublicRoutes(v1)
 
 		// Protected routes (auth required)
 		protected := v1.Group("/")
-		jwtMiddleware, _ := middleware.NewJWTMiddleware(s.config.Clerk.PEMPublicKey, s.config.Clerk.AuthorizedParties)
-		protected.Use(jwtMiddleware.Authenticate())
+		if jwtMiddleware != nil {
+			protected.Use(jwtMiddleware.Authenticate())
+		}
 		s.registerProtectedRoutes(protected)
 	}
 }
@@ -120,6 +130,7 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 
 	// Single submission detail (auth version – needed for like status of logged-in user)
 	rg.GET("/me/submissions/:id", h.SubmissionStatusHandler)
+	rg.DELETE("/me/submissions/:id", h.DeleteSubmissionHandler)
 
 	// Like / unlike a submission (toggle)
 	rg.POST("/submissions/:id/like", h.ToggleLikeHandler)

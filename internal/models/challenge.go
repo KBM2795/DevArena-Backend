@@ -31,6 +31,7 @@ const (
 	ChallengeTypeFeature  ChallengeType = "feature"  // Add feature to existing project
 	ChallengeTypeRefactor ChallengeType = "refactor" // Refactor/improve code
 	ChallengeTypeBugfix   ChallengeType = "bugfix"   // Fix bugs in codebase
+	ChallengeTypeTopic    ChallengeType = "topic"    // Topic/info only — no pre-built repo
 )
 
 // Challenge represents a DevArena coding challenge

@@ -335,3 +335,37 @@ func (db *Database) GetUserSubmissions(clerkUserID string) ([]SubmissionDetail, 
 
 	return subs, nil
 }
+
+// DeleteSubmission deletes a submission if it belongs to the user
+func (db *Database) DeleteSubmission(clerkUserID string, submissionID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Get internal user ID
+	var internalUserID string
+	err := db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE clerk_user_id = $1", clerkUserID).Scan(&internalUserID)
+	if err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	// Verify ownership
+	var exists bool
+	err = db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM submissions WHERE id = $1 AND user_id = $2)", submissionID, internalUserID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("unauthorized to delete this submission")
+	}
+
+	// Delete submission
+	_, err = db.Pool.Exec(ctx, "DELETE FROM submissions WHERE id = $1 AND user_id = $2", submissionID, internalUserID)
+	if err != nil {
+		return fmt.Errorf("failed to delete submission: %w", err)
+	}
+
+	// Update user's score/stats since the submission is gone
+	_ = db.UpdateUserStats(ctx, internalUserID)
+
+	return nil
+}
