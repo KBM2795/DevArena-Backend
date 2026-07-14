@@ -36,7 +36,7 @@ func NewServer(cfg *config.Config, db *db.Database) *Server {
 	if len(allowedOrigins) == 0 {
 		allowedOrigins = []string{
 			"http://localhost:3000",
-			"https://devarena.dev",
+			"https://devarena.koshik.app",
 			"https://dev-arena-ten.vercel.app",
 		}
 	}
