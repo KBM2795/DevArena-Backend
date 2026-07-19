@@ -10,12 +10,12 @@ services:
     environment:
       - ENV=development
       - SERVER_PORT=8080
-      - DATABASE_HOST=db
-      - DATABASE_PORT=5432
-      - DATABASE_USER=postgres
-      - DATABASE_PASSWORD=postgres
-      - DATABASE_DBNAME=devarena
-      - DATABASE_SSLMODE=disable
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_DBNAME=${DATABASE_DBNAME}
+      - DATABASE_SSLMODE=${DATABASE_SSLMODE}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GITHUB_GITHUB_PAT=${GITHUB_PAT}
       - CLERK_PEM_PUBLIC_KEY=${CLERK_PEM_PUBLIC_KEY}
@@ -29,21 +29,3 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # CRITICAL: Align /tmp so host and container share the same path for cloned repos
       - /tmp:/tmp
-    depends_on:
-      - db
-
-  db:
-    image: postgres:15-alpine
-    container_name: devarena-db
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=devarena
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-volumes:
-  postgres_data:
