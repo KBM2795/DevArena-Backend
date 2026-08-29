@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -446,7 +447,7 @@ func (h *Handlers) DeleteSubmissionHandler(c *gin.Context) {
 		return
 	}
 
-	err := h.DB.DeleteSubmission(userID, submissionID)
+	videoURL, err := h.DB.DeleteSubmission(userID, submissionID)
 	if err != nil {
 		if err.Error() == "unauthorized to delete this submission" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to delete this project"})
@@ -454,6 +455,13 @@ func (h *Handlers) DeleteSubmissionHandler(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete submission"})
 		return
+	}
+
+	// Clean up the associated video from S3 (best-effort; don't fail the request)
+	if videoURL != "" {
+		if delErr := deleteS3Object(videoURL); delErr != nil {
+			log.Printf("Failed to delete S3 video %q for submission %s: %v", videoURL, submissionID, delErr)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Project showcase deleted successfully"})

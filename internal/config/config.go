@@ -18,6 +18,18 @@ type Config struct {
 	Gemini    Gemini    `mapstructure:"gemini"`
 	RateLimit RateLimit `mapstructure:"rate_limit"`
 	Supabase  Supabase  `mapstructure:"supabase"`
+	AWS       AWS       `mapstructure:"aws"`
+}
+
+// AWS holds AWS S3 configuration used for video storage.
+type AWS struct {
+	Region                   string `mapstructure:"region"`
+	Bucket                   string `mapstructure:"bucket"`
+	AccessKey                string `mapstructure:"access_key"`
+	SecretKey                string `mapstructure:"secret_key"`
+	CloudFrontDomain         string `mapstructure:"cf_domain"`
+	CloudFrontKeyID          string `mapstructure:"cf_key_id"`
+	CloudFrontPrivateKeyPath string `mapstructure:"cf_private_key_path"`
 }
 
 // RateLimit controls the global per-IP rate limiter.
@@ -125,12 +137,35 @@ func LoadConfig() (*Config, error) {
 		os.Setenv("SUPABASE_BUCKET", cfg.Supabase.Bucket)
 	}
 
+	// Propagate AWS S3 config back to environment variables
+	if cfg.AWS.Region != "" {
+		os.Setenv("AWS_REGION", cfg.AWS.Region)
+	}
+	if cfg.AWS.Bucket != "" {
+		os.Setenv("AWS_S3_BUCKET", cfg.AWS.Bucket)
+	}
+	if cfg.AWS.AccessKey != "" {
+		os.Setenv("AWS_ACCESS_KEY_ID", cfg.AWS.AccessKey)
+	}
+	if cfg.AWS.SecretKey != "" {
+		os.Setenv("AWS_SECRET_ACCESS_KEY", cfg.AWS.SecretKey)
+	}
+	if cfg.AWS.CloudFrontDomain != "" {
+		os.Setenv("AWS_CF_DOMAIN", cfg.AWS.CloudFrontDomain)
+	}
+	if cfg.AWS.CloudFrontKeyID != "" {
+		os.Setenv("AWS_CF_KEY_ID", cfg.AWS.CloudFrontKeyID)
+	}
+	if cfg.AWS.CloudFrontPrivateKeyPath != "" {
+		os.Setenv("AWS_CF_PRIVATE_KEY_PATH", cfg.AWS.CloudFrontPrivateKeyPath)
+	}
+
 	return &cfg, nil
 }
 
 type Supabase struct {
-    URL             string `mapstructure:"url"`
-    Key             string `mapstructure:"anon_key"`
-    ServiceRoleKey  string `mapstructure:"service_role_key"`
-    Bucket          string `mapstructure:"bucket"`
+	URL            string `mapstructure:"url"`
+	Key            string `mapstructure:"anon_key"`
+	ServiceRoleKey string `mapstructure:"service_role_key"`
+	Bucket         string `mapstructure:"bucket"`
 }

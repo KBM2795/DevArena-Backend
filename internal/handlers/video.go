@@ -2,6 +2,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,11 +19,74 @@ import (
 	"time"
 
 	"github.com/KBM2795/DevArena-Backend/internal/auth/middleware"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-// UploadVideoHandler handles uploading a video demo file to Supabase Storage
+// getS3Client builds an S3 client from environment configuration.
+func getS3Client() (*s3.Client, error) {
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = "ap-south-1"
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion(region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	return s3.NewFromConfig(cfg), nil
+}
+
+// deleteS3Object removes an object from S3. Given a full URL (S3 or CloudFront)
+// it derives the S3 key; otherwise it treats the input as a raw key.
+func deleteS3Object(raw string) error {
+	bucketName := os.Getenv("AWS_S3_BUCKET")
+	if bucketName == "" {
+		bucketName = "devarena-videos"
+	}
+
+	key := raw
+	// If it's a full URL (https://host/...), strip the scheme and host to get the key.
+	if strings.Contains(raw, "://") {
+		after := raw[strings.Index(raw, "://")+3:]
+		// For S3 URLs the bucket is part of the host, for CloudFront URLs it is not.
+		parts := strings.SplitN(after, "/", 2)
+		if len(parts) == 2 {
+			if strings.Contains(parts[0], ".s3.") || strings.Contains(parts[0], ".s3-") {
+				bucketName = parts[0]
+				key = parts[1]
+			} else {
+				key = parts[1]
+			}
+		}
+	}
+
+	client, err := getS3Client()
+	if err != nil {
+		return fmt.Errorf("failed to init AWS S3 client: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete S3 object: %w", err)
+	}
+
+	return nil
+}
+
+// UploadVideoHandler handles uploading a video demo file to AWS S3
 // POST /me/submissions/upload-video
 func (h *Handlers) UploadVideoHandler(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
@@ -53,66 +124,112 @@ func (h *Handlers) UploadVideoHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Build Supabase upload path
-	supabaseURL := os.Getenv("SUPABASE_URL")
-	if supabaseURL == "" {
-		supabaseURL = "https://mrcnfawfpqcrgewmjrhp.supabase.co"
-	}
-	supabaseURL = strings.TrimSuffix(supabaseURL, "/")
-
-	// Prefer service role key for server-side uploads (bypasses RLS)
-	supabaseKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
-	if supabaseKey == "" {
-		supabaseKey = os.Getenv("SUPABASE_ANON_KEY")
-	}
-
-	if supabaseKey == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Supabase key is not configured. Set SUPABASE_SERVICE_ROLE_KEY in local.yaml"})
-		return
-	}
-
-	bucketName := os.Getenv("SUPABASE_BUCKET")
+	bucketName := os.Getenv("AWS_S3_BUCKET")
 	if bucketName == "" {
-		bucketName = "submissions" // Default bucket
+		bucketName = "devarena-videos"
 	}
 
-	// Create a unique filename: <userId>-<timestamp>-<uuid><ext>
+	// 5. Build S3 upload path
 	ext := filepath.Ext(header.Filename)
 	uniqueFilename := fmt.Sprintf("%s-%d-%s%s", userID, time.Now().Unix(), uuid.New().String()[:8], ext)
-	uploadPath := fmt.Sprintf("video-demos/%s", uniqueFilename)
+	key := fmt.Sprintf("video-demos/%s", uniqueFilename)
 
-	// 6. Execute POST request to Supabase Storage REST API
-	uploadURL := fmt.Sprintf("%s/storage/v1/object/%s/%s", supabaseURL, bucketName, uploadPath)
-	req, err := http.NewRequest(http.MethodPost, uploadURL, &buf)
+	// 6. Upload to S3
+	client, err := getS3Client()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Supabase request"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to init AWS S3 client: " + err.Error()})
 		return
 	}
 
-	req.Header.Set("Authorization", "Bearer "+supabaseKey)
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("x-upsert", "true") // Allow overwriting if same path
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(buf.Bytes()),
+		ContentType: aws.String(contentType),
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Supabase storage connection failed: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "S3 upload failed: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBytes, _ := io.ReadAll(resp.Body)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Supabase upload failed (HTTP %d): %s", resp.StatusCode, string(respBytes)),
+	// 7. Build a signed CloudFront URL for playback (1-day expiry)
+	cfDomain := os.Getenv("AWS_CF_DOMAIN")
+	if cfDomain != "" && os.Getenv("AWS_CF_KEY_ID") != "" && os.Getenv("AWS_CF_PRIVATE_KEY_PATH") != "" {
+		signedURL, err := signCloudFrontURL(cfDomain, key)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign video URL: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"video_url": signedURL,
+			"filename":  uniqueFilename,
 		})
 		return
 	}
 
-	// 7. Construct and return public access URL
-	publicURL := fmt.Sprintf("%s/storage/v1/object/public/%s/%s", supabaseURL, bucketName, uploadPath)
+	// Fall back to a public S3 URL when CloudFront is not configured
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = "ap-south-1"
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"video_url": publicURL,
+		"video_url": fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, key),
 		"filename":  uniqueFilename,
 	})
+}
+
+// signCloudFrontURL creates a signed CloudFront URL valid for 24 hours.
+// It uses standard RSA-SHA1 signing of the resource URL with an Expires
+// query parameter, matching CloudFront's signed URL format.
+func signCloudFrontURL(baseDomain, key string) (string, error) {
+	cfDomain := strings.TrimSuffix(baseDomain, "/")
+	cfKeyID := os.Getenv("AWS_CF_KEY_ID")
+	privateKeyPath := os.Getenv("AWS_CF_PRIVATE_KEY_PATH")
+
+	if cfKeyID == "" || privateKeyPath == "" {
+		return "", fmt.Errorf("AWS_CF_KEY_ID and AWS_CF_PRIVATE_KEY_PATH are required")
+	}
+
+	privateKeyPEM, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read CloudFront private key: %w", err)
+	}
+
+	// Parse the RSA private key (PEM block)
+	block, _ := pem.Decode(privateKeyPEM)
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block from private key")
+	}
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		// Try PKCS1 as fallback
+		privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse private key: %w", err)
+		}
+	}
+	rsaKey, ok := privateKey.(*rsa.PrivateKey)
+	if !ok {
+		return "", fmt.Errorf("private key is not an RSA key")
+	}
+
+	// Build the resource URL and sign it
+	resource := fmt.Sprintf("%s/%s", cfDomain, key)
+	expires := time.Now().Add(24 * time.Hour).Unix()
+
+	// Sign the resource string using RSA-SHA1
+	hashed := sha1.Sum([]byte(resource))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, rsaKey, crypto.SHA1, hashed[:])
+	if err != nil {
+		return "", fmt.Errorf("failed to sign URL: %w", err)
+	}
+
+	// URL-safe base64 encode the signature
+	encodedSig := base64.URLEncoding.EncodeToString(signature)
+
+	return fmt.Sprintf("%s?Expires=%d&Signature=%s&Key-Pair-Id=%s",
+		resource, expires, encodedSig, cfKeyID), nil
 }
