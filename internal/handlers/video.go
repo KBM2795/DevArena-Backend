@@ -195,10 +195,13 @@ func signCloudFrontURL(baseDomain, key string) (string, error) {
 		return "", fmt.Errorf("failed to read CloudFront private key: %w", err)
 	}
 
-	// Parse the RSA private key (PEM block, PKCS8 or PKCS1)
-	block, _ := pem.Decode(privateKeyPEM)
-	if block == nil {
-		return "", fmt.Errorf("failed to decode PEM block from private key")
+	// Parse the RSA private key (PEM block, PKCS8 or PKCS1).
+	// Be tolerant of copy-paste corruption: strip a UTF-8 BOM, normalize line
+	// endings, and extract only the region between the first BEGIN and last END
+	// fence so stray whitespace/headers around the block don't break decoding.
+	block, err := decodePEMTolerant(privateKeyPEM)
+	if err != nil {
+		return "", err
 	}
 	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
@@ -216,4 +219,39 @@ func signCloudFrontURL(baseDomain, key string) (string, error) {
 	resource := fmt.Sprintf("%s/%s", cfDomain, key)
 	signer := cfsign.NewURLSigner(cfKeyID, rsaKey)
 	return signer.Sign(resource, time.Now().Add(24*time.Hour))
+}
+
+// decodePEMTolerant extracts and decodes a PEM block, tolerating common
+// copy-paste corruption (BOM, CRLF, stray whitespace/headers around the block).
+func decodePEMTolerant(raw []byte) (*pem.Block, error) {
+	s := string(raw)
+	// Strip UTF-8 BOM
+	s = strings.TrimPrefix(s, "\ufeff")
+	// Normalize line endings
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+
+	// Extract everything between the first BEGIN and last END fence.
+	begin := strings.Index(s, "-----BEGIN")
+	end := strings.LastIndex(s, "-----END")
+	var blockData []byte
+	if begin < 0 || end < 0 {
+		blockData = []byte(s)
+	} else {
+		if end+len("-----END")+1 < len(s) {
+			blockData = []byte(s[begin : end+len("-----END")+1])
+		} else {
+			blockData = []byte(s[begin:])
+		}
+	}
+
+	block, _ := pem.Decode(blockData)
+	if block == nil {
+		// Last resort: try decoding the whole (trimmed) input.
+		block, _ = pem.Decode(bytes.TrimSpace(raw))
+	}
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block from private key")
+	}
+	return block, nil
 }
