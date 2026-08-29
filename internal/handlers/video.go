@@ -3,12 +3,8 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -22,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	cfsign "github.com/aws/aws-sdk-go/service/cloudfront/sign"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -182,8 +179,8 @@ func (h *Handlers) UploadVideoHandler(c *gin.Context) {
 }
 
 // signCloudFrontURL creates a signed CloudFront URL valid for 24 hours.
-// It uses standard RSA-SHA1 signing of the resource URL with an Expires
-// query parameter, matching CloudFront's signed URL format.
+// It uses the AWS CloudFront canned-policy signing algorithm (RSA-SHA1 over
+// the canned policy JSON) with the correct URL-safe base64 escaping.
 func signCloudFrontURL(baseDomain, key string) (string, error) {
 	cfDomain := strings.TrimSuffix(baseDomain, "/")
 	cfKeyID := os.Getenv("AWS_CF_KEY_ID")
@@ -198,14 +195,13 @@ func signCloudFrontURL(baseDomain, key string) (string, error) {
 		return "", fmt.Errorf("failed to read CloudFront private key: %w", err)
 	}
 
-	// Parse the RSA private key (PEM block)
+	// Parse the RSA private key (PEM block, PKCS8 or PKCS1)
 	block, _ := pem.Decode(privateKeyPEM)
 	if block == nil {
 		return "", fmt.Errorf("failed to decode PEM block from private key")
 	}
 	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		// Try PKCS1 as fallback
 		privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
 			return "", fmt.Errorf("failed to parse private key: %w", err)
@@ -216,20 +212,8 @@ func signCloudFrontURL(baseDomain, key string) (string, error) {
 		return "", fmt.Errorf("private key is not an RSA key")
 	}
 
-	// Build the resource URL and sign it
+	// Sign the CloudFront URL (canned policy with 24h expiry)
 	resource := fmt.Sprintf("%s/%s", cfDomain, key)
-	expires := time.Now().Add(24 * time.Hour).Unix()
-
-	// Sign the resource string using RSA-SHA1
-	hashed := sha1.Sum([]byte(resource))
-	signature, err := rsa.SignPKCS1v15(rand.Reader, rsaKey, crypto.SHA1, hashed[:])
-	if err != nil {
-		return "", fmt.Errorf("failed to sign URL: %w", err)
-	}
-
-	// URL-safe base64 encode the signature
-	encodedSig := base64.URLEncoding.EncodeToString(signature)
-
-	return fmt.Sprintf("%s?Expires=%d&Signature=%s&Key-Pair-Id=%s",
-		resource, expires, encodedSig, cfKeyID), nil
+	signer := cfsign.NewURLSigner(cfKeyID, rsaKey)
+	return signer.Sign(resource, time.Now().Add(24*time.Hour))
 }

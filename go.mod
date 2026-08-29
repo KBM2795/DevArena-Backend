@@ -3,6 +3,7 @@ module github.com/KBM2795/DevArena-Backend
 go 1.25.5
 
 require (
+	github.com/aws/aws-sdk-go v1.55.8
 	github.com/aws/aws-sdk-go-v2 v1.45.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.109.1
