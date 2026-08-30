@@ -40,8 +40,9 @@ func getS3Client() (*s3.Client, error) {
 	return s3.NewFromConfig(cfg), nil
 }
 
-// deleteS3Object removes an object from S3. Given a full URL (S3 or CloudFront)
-// it derives the S3 key; otherwise it treats the input as a raw key.
+// deleteS3Object removes an object from S3. Given a full URL (S3 or CloudFront,
+// which may include signed-URL query parameters) it derives the S3 key;
+// otherwise it treats the input as a raw key.
 func deleteS3Object(raw string) error {
 	bucketName := os.Getenv("AWS_S3_BUCKET")
 	if bucketName == "" {
@@ -49,9 +50,14 @@ func deleteS3Object(raw string) error {
 	}
 
 	key := raw
+	clean := raw
+	// Drop any query string (e.g. CloudFront signed URL ?Expires=&Signature=).
+	if idx := strings.IndexByte(clean, '?'); idx >= 0 {
+		clean = clean[:idx]
+	}
 	// If it's a full URL (https://host/...), strip the scheme and host to get the key.
-	if strings.Contains(raw, "://") {
-		after := raw[strings.Index(raw, "://")+3:]
+	if strings.Contains(clean, "://") {
+		after := clean[strings.Index(clean, "://")+3:]
 		// For S3 URLs the bucket is part of the host, for CloudFront URLs it is not.
 		parts := strings.SplitN(after, "/", 2)
 		if len(parts) == 2 {
