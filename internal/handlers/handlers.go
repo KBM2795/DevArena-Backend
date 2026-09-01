@@ -166,9 +166,9 @@ func (h *Handlers) GetStarterPackHandler(c *gin.Context) {
 	})
 }
 
-// LeaderboardHandler returns the top ranked users (public endpoint)
+// LeaderboardHandler returns the top ranked users and surrounding rankings (public endpoint with optional auth)
 func (h *Handlers) LeaderboardHandler(c *gin.Context) {
-	limit := 10 // Default to top 10
+	limit := 20 // Default to top 20
 
 	// Allow custom limit via query param (max 50)
 	if limitStr := c.Query("limit"); limitStr != "" {
@@ -180,15 +180,22 @@ func (h *Handlers) LeaderboardHandler(c *gin.Context) {
 		}
 	}
 
-	entries, err := h.DB.GetLeaderboard(limit)
+	currentUserID, _ := middleware.GetUserID(c)
+	if currentUserID == "" {
+		currentUserID = c.Query("user_id")
+	}
+
+	result, err := h.DB.GetLeaderboardWithSurroundings(currentUserID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch leaderboard"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data":  entries,
-		"total": len(entries),
+		"data":         result.Top,
+		"total":        len(result.Top),
+		"surroundings": result.Surroundings,
+		"user_rank":    result.UserRank,
 	})
 }
 

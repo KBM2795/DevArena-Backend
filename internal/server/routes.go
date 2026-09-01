@@ -87,6 +87,17 @@ func (s *Server) registerPublicRoutes(rg *gin.RouterGroup) {
 
 	// Leaderboard route (public)
 	rg.GET("/leaderboard", h.LeaderboardHandler)
+
+	// User search (public)
+	rg.GET("/users/search", h.SearchUsersHandler)
+
+	// Public user profile by username or id
+	rg.GET("/users/:id/profile", h.GetPublicUserProfileHandler)
+
+	// Follow status & lists (public read)
+	rg.GET("/users/:id/follow", h.GetFollowStatusHandler)
+	rg.GET("/users/:id/followers", h.GetFollowersHandler)
+	rg.GET("/users/:id/following", h.GetFollowingHandler)
 }
 
 // registerProtectedRoutes registers routes that require authentication
@@ -137,6 +148,12 @@ func (s *Server) registerProtectedRoutes(rg *gin.RouterGroup) {
 
 	// Post a comment (challenge or project level)
 	rg.POST("/comments", h.PostCommentHandler)
+
+	// Follow toggle (protected)
+	rg.POST("/users/:id/follow", h.ToggleFollowHandler)
+
+	// Following feed (protected)
+	rg.GET("/me/following-feed", h.GetFollowingFeedHandler)
 
 	// Notification routes
 	rg.GET("/me/notifications", h.GetNotifications)

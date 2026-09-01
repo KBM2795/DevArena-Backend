@@ -19,6 +19,8 @@ type User struct {
 	TotalScore          int       `json:"total_score" gorm:"default:0"`
 	Rank                int       `json:"rank" gorm:"default:0"`
 	ChallengesCompleted int       `json:"challenges_completed" gorm:"default:0"`
+	FollowersCount      int       `json:"followers_count" gorm:"default:0"`
+	FollowingCount      int       `json:"following_count" gorm:"default:0"`
 	CreatedAt           time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt           time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
